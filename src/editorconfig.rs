@@ -15,6 +15,10 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+use clap::Error;
+
+use crate::editorconfig::EditorConfigError::InvalidNumberOfSections;
+
 /// A single `[glob]` section of an `.editorconfig` file, with its
 /// properties lowercased (both keys and values) for case-insensitive
 /// lookup.
@@ -59,7 +63,7 @@ pub enum EditorConfigError {
         source: std::io::Error,
     },
     GlobDoesntMatchCs,
-    TooManySections,
+    InvalidNumberOfSections,
     MissingProperties {
         section: String,
         missing: Vec<&'static str>,
@@ -84,7 +88,7 @@ impl fmt::Display for EditorConfigError {
                 f,
                 "no section in .editorconfig matches C# files (expected something like [*.cs] or [*])"
             ),
-            EditorConfigError::TooManySections => write!(
+            EditorConfigError::InvalidNumberOfSections => write!(
                 f,
                 "expected exactly 1 section in .editorconfig matching C# files;",
             ),
@@ -113,6 +117,7 @@ impl std::error::Error for EditorConfigError {}
 /// Reads `.editorconfig` from `dir` and resolves the properties this
 /// formatter needs.
 pub fn read(dir: &Path) -> Result<EditorConfig, EditorConfigError> {
+    // TODO: do we need to check path for .editorconfig already?
     let path = dir.join(".editorconfig");
     if !path.is_file() {
         return Err(EditorConfigError::NotFound(path));
@@ -123,19 +128,16 @@ pub fn read(dir: &Path) -> Result<EditorConfig, EditorConfigError> {
     })?;
 
     let sections = parse_sections(&content);
-    verify_section_len(&sections)?;
-    if sections.len() != 1 {
-        return Err(EditorConfigError::TooManySections);
-    }
-    // This is a safe assert to make since we check above
-    resolve(&sections.first().expect("There should only be 1 section"))
+    let section = verify_section_len(&sections)?;
+    resolve(section)
 }
 
-fn verify_section_len(sections: &[Section]) -> Result<(), EditorConfigError> {
-    if sections.len() != 1 {
-        return Err(EditorConfigError::TooManySections);
+fn verify_section_len(sections: &[Section]) -> Result<&Section, EditorConfigError> {
+    if let [section] = sections {
+        Ok(section)
+    } else {
+        Err(EditorConfigError::InvalidNumberOfSections)
     }
-    Ok(())
 }
 
 /// Parses raw `.editorconfig` text into a list of sections. Anything
@@ -279,7 +281,7 @@ tab_width = 4
 ";
         let sections = parse_sections(content);
         let first = sections.first().expect("should have only 1 section");
-        let config = resolve(&first).expect("should resolve");
+        let config = resolve(first).expect("should resolve");
         assert_eq!(config.indent_style, IndentStyle::Space);
         assert_eq!(config.indent_size, IndentSize::Columns(4));
         assert_eq!(config.tab_width, 4);
@@ -326,7 +328,7 @@ tab_width = 4
         let sections = parse_sections(content);
         assert!(matches!(
             verify_section_len(&sections),
-            Err(EditorConfigError::TooManySections)
+            Err(EditorConfigError::InvalidNumberOfSections)
         ));
     }
 

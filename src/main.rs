@@ -17,9 +17,11 @@
 */
 mod cli;
 mod editorconfig;
+mod formatter;
 
 use clap::Parser;
 use cli::Cli;
+use formatter::format;
 
 fn main() {
     let cli = Cli::parse();
@@ -27,7 +29,18 @@ fn main() {
 
     let cwd = std::env::current_dir().expect("failed to read current directory");
     match editorconfig::read(&cwd) {
-        Ok(config) => println!("{:#?}", config),
+        Ok(config) => {
+            println!("{:#?}", config);
+
+            // Temporary smoke test for the formatter while it's under
+            // construction -- will be replaced with real file I/O once
+            // the CLI subcommands are wired up.
+            let sample = "var                x =               5;\r\nvar y=10;";
+            match format(sample, &config) {
+                Ok(formatted) => println!("{}", formatted),
+                Err(err) => match err {},
+            }
+        }
         Err(err) => eprintln!("error: {}", err),
     }
 }
