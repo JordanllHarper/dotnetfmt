@@ -35,9 +35,21 @@ fn main() {
             // Temporary smoke test for the formatter while it's under
             // construction -- will be replaced with real file I/O once
             // the CLI subcommands are wired up.
-            let sample = "var                x =               5;\r\nvar y=10;";
+            let sample = concat!(
+                "var                x =               5;\r\n",
+                "var y=10;\r\n",
+                "var z=someFunction();\r\n",
+                "var w = someFunction (   )   ;\r\n",
+                "var a=someFunction(1);\r\n",
+                "var b = someFunction(   c   );",
+            );
             match format(sample, &config) {
-                Ok(formatted) => println!("{}", formatted),
+                Ok(formatted) => {
+                    for (before, after) in sample.split("\r\n").zip(formatted.split("\r\n")) {
+                        println!("before: {}", before);
+                        println!("after:  {}\n", after);
+                    }
+                }
                 Err(err) => match err {},
             }
         }

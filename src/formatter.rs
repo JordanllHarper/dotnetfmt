@@ -1,26 +1,28 @@
-//! whitespace formatting for c# source text.
+//! Whitespace formatting for C# source text.
 //!
-//! scope for this pass:
-//!   - indentation is not touched yet. any leading whitespace on a line is
+//! Scope for this pass:
+//!   - Indentation is not touched yet. Any leading whitespace on a line is
 //!     captured as-is and reattached unchanged; a later step will replace
 //!     it with indentation computed from `indent_size`/`indent_style`/
 //!     `tab_width`.
-//!   - only one construct is recognized: a single-line local variable
-//!     declaration of the shape `var <name> = <value>;` (e.g. `var x = 5;`),
+//!   - Only one statement shape is recognized: a single-line local
+//!     variable declaration, `var <name> = <value>;` (e.g. `var x = 5;`),
 //!     however it is spaced in the input (`var x=5;`,
-//!     `var                x =               5;`, etc.).
-//!   - any line that doesn't match that exact shape is left completely
-//!     unchanged. this is deliberate: we only rewrite what we can
-//!     confidently understand, and leave everything else (including
-//!     constructs like function calls, which are a future step) alone
-//!     rather than guessing.
-//!   - per the project's assumption, line endings are crlf.
+//!     `var                x =               5;`, etc.). `<value>` may be
+//!     a bare atom (`5`, `someValue`), or a function call with zero or one
+//!     argument (`someFunction()`, `someFunction(a)`, however spaced) --
+//!     a call with more than one argument is not recognized yet.
+//!   - Any line that doesn't match that exact shape is left completely
+//!     unchanged. This is deliberate: we only rewrite what we can
+//!     confidently understand, and leave everything else alone rather
+//!     than guessing.
+//!   - Per the project's assumption, line endings are CRLF.
 
 use std::{fmt, iter::Peekable};
 
 use crate::editorconfig::EditorConfig;
 
-/// errors produced while formatting.
+/// Errors produced while formatting.
 ///
 /// No cases are produced yet -- this pass only ever recognizes-and-fixes
 /// or leaves-untouched, it never rejects input. This type is reserved for
@@ -145,28 +147,60 @@ fn is_valid_variable_char(c: &char) -> bool {
     c.is_ascii_alphanumeric() || *c == '_'
 }
 
-/// Recognizes `var <name> = <value>;` (exactly five tokens) in whatever
-/// spacing it appears, and rewrites it with normalized spacing: a single
-/// space between tokens, no space before `;`. Returns `None` for anything
+/// Recognizes `var <name> = <value>;` in whatever spacing it appears, and
+/// rewrites it with normalized spacing: a single space between tokens, no
+/// space before `;`, no space inside `()`. Returns `None` for anything
 /// else, including lines that merely start with `var` but don't fully
-/// match this shape -- that's left untouched rather than guessed at.
+/// match a recognized shape -- that's left untouched rather than guessed
+/// at.
 fn try_format_variable_declaration(rest: &str) -> Option<String> {
     let tokens = tokenize(rest);
-    if tokens.len() != 5 {
+    if tokens.len() < 5 {
         return None;
     }
 
     let keyword = as_atom(tokens[0])?;
     let name = as_atom(tokens[1])?;
     let eq = as_symbol(tokens[2])?;
-    let value = as_atom(tokens[3])?;
-    let semi = as_symbol(tokens[4])?;
+    let semi = as_symbol(tokens[tokens.len() - 1])?;
 
     if keyword != "var" || eq != '=' || semi != ';' {
         return None;
     }
 
+    let value = format_value(&tokens[3..tokens.len() - 1])?;
+
     Some(format!("var {name} = {value};"))
+}
+
+/// Recognizes a `<value>` expression (the right-hand side of `=` in a
+/// variable declaration): a bare atom (`5`, `someValue`), or a function
+/// call with zero or one argument (`someFunction()`, `someFunction(a)`,
+/// however spaced -- the argument itself must be a bare atom, not a
+/// nested expression). Returns its normalized text, or `None` if
+/// `value_tokens` matches none of those shapes.
+fn format_value(value_tokens: &[Token]) -> Option<String> {
+    match value_tokens {
+        [atom] => Some(as_atom(*atom)?.to_string()),
+        [name, open, close] => {
+            let name = as_atom(*name)?;
+            if as_symbol(*open)? == '(' && as_symbol(*close)? == ')' {
+                Some(format!("{name}()"))
+            } else {
+                None
+            }
+        }
+        [name, open, arg, close] => {
+            let name = as_atom(*name)?;
+            let arg = as_atom(*arg)?;
+            if as_symbol(*open)? == '(' && as_symbol(*close)? == ')' {
+                Some(format!("{name}({arg})"))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +250,36 @@ mod tests {
     fn unrecognized_lines_are_left_alone() {
         let result = format("Foo(a, b);", &config()).unwrap();
         assert_eq!(result, "Foo(a, b);");
+    }
+
+    #[test]
+    fn formats_empty_function_call_value() {
+        let result = format("var x=someFunction();", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction();");
+    }
+
+    #[test]
+    fn collapses_whitespace_around_empty_call_parens() {
+        let result = format("var x = someFunction (   )   ;", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction();");
+    }
+
+    #[test]
+    fn formats_single_argument_function_call_value() {
+        let result = format("var x=someFunction(a);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a);");
+    }
+
+    #[test]
+    fn collapses_whitespace_around_single_argument() {
+        let result = format("var x = someFunction(a     );", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a);");
+    }
+
+    #[test]
+    fn multiple_argument_function_call_is_not_yet_recognized() {
+        let result = format("var x = someFunction(a, b);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a, b);");
     }
 
     #[test]
