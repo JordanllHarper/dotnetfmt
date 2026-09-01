@@ -15,10 +15,6 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-use clap::Error;
-
-use crate::editorconfig::EditorConfigError::InvalidNumberOfSections;
-
 /// A single `[glob]` section of an `.editorconfig` file, with its
 /// properties lowercased (both keys and values) for case-insensitive
 /// lookup.
@@ -63,7 +59,7 @@ pub enum EditorConfigError {
         source: std::io::Error,
     },
     GlobDoesntMatchCs,
-    InvalidNumberOfSections,
+    InvalidNumberOfSections(usize),
     MissingProperties {
         section: String,
         missing: Vec<&'static str>,
@@ -88,9 +84,9 @@ impl fmt::Display for EditorConfigError {
                 f,
                 "no section in .editorconfig matches C# files (expected something like [*.cs] or [*])"
             ),
-            EditorConfigError::InvalidNumberOfSections => write!(
+            EditorConfigError::InvalidNumberOfSections(found) => write!(
                 f,
-                "expected exactly 1 section in .editorconfig matching C# files;",
+                "expected exactly 1 section in .editorconfig, but found {found}. It must apply to C# files (e.g. [*.cs])"
             ),
             EditorConfigError::MissingProperties { section, missing } => write!(
                 f,
@@ -136,7 +132,7 @@ fn verify_section_len(sections: &[Section]) -> Result<&Section, EditorConfigErro
     if let [section] = sections {
         Ok(section)
     } else {
-        Err(EditorConfigError::InvalidNumberOfSections)
+        Err(EditorConfigError::InvalidNumberOfSections(sections.len()))
     }
 }
 
@@ -328,7 +324,7 @@ tab_width = 4
         let sections = parse_sections(content);
         assert!(matches!(
             verify_section_len(&sections),
-            Err(EditorConfigError::InvalidNumberOfSections)
+            Err(EditorConfigError::InvalidNumberOfSections(2))
         ));
     }
 

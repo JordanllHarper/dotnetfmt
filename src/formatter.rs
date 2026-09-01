@@ -16,9 +16,9 @@
 //!     rather than guessing.
 //!   - per the project's assumption, line endings are crlf.
 
-use std::{fmt, iter::peekable};
+use std::{fmt, iter::Peekable};
 
-use crate::editorconfig::editorconfig;
+use crate::editorconfig::EditorConfig;
 
 /// errors produced while formatting.
 ///
@@ -172,7 +172,7 @@ fn try_format_variable_declaration(rest: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editorconfig::{IndentSize, IndentStyle};
+    use crate::editorconfig::{EditorConfig, IndentSize, IndentStyle};
 
     fn config() -> EditorConfig {
         EditorConfig {
