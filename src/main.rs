@@ -41,7 +41,9 @@ fn main() {
                 "var z=someFunction();\r\n",
                 "var w = someFunction (   )   ;\r\n",
                 "var a=someFunction(1);\r\n",
-                "var b = someFunction(   c   );",
+                "var b = someFunction(   c   );\r\n",
+                "var d=someFunction(e,f,g);\r\n",
+                "var h=someFunction(e+f);",
             );
             match format(sample, &config) {
                 Ok(formatted) => {

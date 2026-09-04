@@ -190,14 +190,38 @@ fn format_value(value_tokens: &[Token]) -> Option<String> {
                 None
             }
         }
-        [name, open, arg, close] => {
+        [name, open, args @ .., close] => {
             let name = as_atom(*name)?;
-            let arg = as_atom(*arg)?;
+            let formatted_args = args
+                .split(|token| matches!(token, Token::Symbol(',')))
+                .map(to_formatted_arguments)
+                .collect::<Option<Vec<String>>>()?
+                .join(", ");
+
             if as_symbol(*open)? == '(' && as_symbol(*close)? == ')' {
-                Some(format!("{name}({arg})"))
+                Some(format!("{name}({formatted_args})"))
             } else {
                 None
             }
+        }
+        _ => None,
+    }
+}
+
+fn to_formatted_arguments(tokens: &[Token]) -> Option<String> {
+    match tokens {
+        [atom] => Some(as_atom(*atom)?.to_string()),
+        [left, Token::Symbol('.'), right] => {
+            let left = as_atom(*left)?;
+            let right = as_atom(*right)?;
+            Some(format!("{left}.{right}"))
+        }
+        [left, op, right] => {
+            let left = as_atom(*left)?;
+            let right = as_atom(*right)?;
+            let op = as_symbol(*op)?;
+
+            Some(format!("{left} {op} {right}"))
         }
         _ => None,
     }
@@ -277,9 +301,77 @@ mod tests {
     }
 
     #[test]
-    fn multiple_argument_function_call_is_not_yet_recognized() {
-        let result = format("var x = someFunction(a, b);", &config()).unwrap();
+    fn collapses_whitespace_around_multiple_arguments() {
+        let result = format(
+            "var x = someFunction(            a       ,        b       );",
+            &config(),
+        )
+        .unwrap();
         assert_eq!(result, "var x = someFunction(a, b);");
+    }
+
+    #[test]
+    fn expands_whitespace_around_multiple_arguments() {
+        let result = format("var x = someFunction(a,b);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a, b);");
+    }
+
+    #[test]
+    fn formats_three_or_more_arguments() {
+        let result = format("var x = someFunction(a,   b ,c);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a, b, c);");
+    }
+
+    #[test]
+    fn arithmetic_expression_argument_is_not_recognized() {
+        // Regression test: an earlier implementation of multi-argument
+        // support panicked here instead of leaving the line untouched,
+        // because it assumed every non-comma token between the parens
+        // was a bare atom.
+        let result = format("var x = someFunction(a + b);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a + b);");
+    }
+
+    #[test]
+    fn member_access_argument_is_recognized() {
+        let result = format("var x = someFunction(a.b, c);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a.b, c);");
+    }
+
+    #[test]
+    fn collapses_whitespace_around_multiple_arguments_with_member_access() {
+        let result = format("var x = someFunction   (a    .    b   , c)  ;", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a.b, c);");
+    }
+
+    #[test]
+    fn expands_whitespace_around_multiple_arguments_with_member_access() {
+        let result = format("var x=someFunction(a.b,c);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a.b, c);");
+    }
+
+    #[test]
+    fn missing_comma_between_arguments_is_not_recognized() {
+        let result = format("var x = someFunction(a b);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a b);");
+    }
+
+    #[test]
+    fn trailing_comma_is_not_recognized() {
+        let result = format("var x = someFunction(a, b,);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a, b,);");
+    }
+
+    #[test]
+    fn leading_comma_is_not_recognized() {
+        let result = format("var x = someFunction(, a);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(, a);");
+    }
+
+    #[test]
+    fn doubled_comma_is_not_recognized() {
+        let result = format("var x = someFunction(a,, b);", &config()).unwrap();
+        assert_eq!(result, "var x = someFunction(a,, b);");
     }
 
     #[test]
