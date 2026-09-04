@@ -181,48 +181,45 @@ fn try_format_variable_declaration(rest: &str) -> Option<String> {
 /// `value_tokens` matches none of those shapes.
 fn format_value(value_tokens: &[Token]) -> Option<String> {
     match value_tokens {
-        [atom] => Some(as_atom(*atom)?.to_string()),
-        [name, open, close] => {
+        [name, Token::Symbol('('), Token::Symbol(')')] => {
             let name = as_atom(*name)?;
-            if as_symbol(*open)? == '(' && as_symbol(*close)? == ')' {
-                Some(format!("{name}()"))
-            } else {
-                None
-            }
+            Some(format!("{name}()"))
         }
-        [name, open, args @ .., close] => {
+        [name, Token::Symbol('('), args @ .., Token::Symbol(')')] => {
             let name = as_atom(*name)?;
             let formatted_args = args
                 .split(|token| matches!(token, Token::Symbol(',')))
-                .map(to_formatted_arguments)
+                .map(to_formatted_expression)
                 .collect::<Option<Vec<String>>>()?
                 .join(", ");
 
-            if as_symbol(*open)? == '(' && as_symbol(*close)? == ')' {
-                Some(format!("{name}({formatted_args})"))
-            } else {
-                None
-            }
+            Some(format!("{name}({formatted_args})"))
         }
-        _ => None,
+        _ => to_formatted_expression(value_tokens),
     }
 }
 
-fn to_formatted_arguments(tokens: &[Token]) -> Option<String> {
+fn format_variable_accessor(left: &Token, right: &Token) -> Option<String> {
+    let left = as_atom(*left)?;
+    let right = as_atom(*right)?;
+    Some(format!("{left}.{right}"))
+}
+
+fn format_math_op(left: &Token, math_op: &char, right: &Token) -> Option<String> {
+    let left = as_atom(*left)?;
+    let right = as_atom(*right)?;
+    if !matches!(math_op, '+' | '-' | '*' | '/') {
+        None
+    } else {
+        Some(format!("{left} {math_op} {right}"))
+    }
+}
+
+fn to_formatted_expression(tokens: &[Token]) -> Option<String> {
     match tokens {
         [atom] => Some(as_atom(*atom)?.to_string()),
-        [left, Token::Symbol('.'), right] => {
-            let left = as_atom(*left)?;
-            let right = as_atom(*right)?;
-            Some(format!("{left}.{right}"))
-        }
-        [left, op, right] => {
-            let left = as_atom(*left)?;
-            let right = as_atom(*right)?;
-            let op = as_symbol(*op)?;
-
-            Some(format!("{left} {op} {right}"))
-        }
+        [left, Token::Symbol('.'), right] => format_variable_accessor(left, right),
+        [left, Token::Symbol(math_op), right] => format_math_op(left, math_op, right),
         _ => None,
     }
 }
@@ -256,6 +253,18 @@ mod tests {
     fn collapses_excess_whitespace() {
         let result = format("var                x =               5;", &config()).unwrap();
         assert_eq!(result, "var x = 5;");
+    }
+
+    #[test]
+    fn collapses_whitespace_around_op() {
+        let result = format("var x = 5    +    3;", &config()).unwrap();
+        assert_eq!(result, "var x = 5 + 3;");
+    }
+
+    #[test]
+    fn collapses_whitespace_around_accessor() {
+        let result = format("var x = a .    b;", &config()).unwrap();
+        assert_eq!(result, "var x = a.b;");
     }
 
     #[test]
