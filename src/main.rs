@@ -1,20 +1,3 @@
-/*
- *  Formatting needs to take in a file and spit out a formatted file
- *
- *  - Start by taking in some file paths to get the file handles and read in the file
- *  - analyze the code
- *  - spit out either to stdin or to the input filepath
- *
- *
- *  What does analyze the code mean?
- *  - we need to look at the code structure and determine two concepts:
- *      - indent (col) matching - how far should the code be indented? How many spaces or tabs are
- *      needed to fulfill that indentation?
- *      - spacing matching - spacing between variables, function calls, etc.
- *      - character matching - using tabs or spaces, how many cols is a tab
- *
- *
-*/
 mod cli;
 mod editorconfig;
 mod formatter;
@@ -36,14 +19,18 @@ fn main() {
             // construction -- will be replaced with real file I/O once
             // the CLI subcommands are wired up.
             let sample = concat!(
-                "var                x =               5;\r\n",
-                "var y=10;\r\n",
-                "var z=someFunction();\r\n",
-                "var w = someFunction (   )   ;\r\n",
-                "var a=someFunction(1);\r\n",
-                "var b = someFunction(   c   );\r\n",
-                "var d=someFunction(e,f,g);\r\n",
-                "var h=someFunction(e+f);",
+                "public   static   int Add(int a,int b)\r\n",
+                "{\r\n",
+                "int sum=a+b;\r\n",
+                "if (sum>0)\r\n",
+                "{\r\n",
+                "Console.WriteLine(\"positive: \"+sum);\r\n",
+                "}\r\n",
+                "List<int> seen=new List<int>();\r\n",
+                "var ok=sum!=0&&sum<100;\r\n",
+                "sum+=1;\r\n",
+                "return sum;\r\n",
+                "}",
             );
             match format(sample, &config) {
                 Ok(formatted) => {
