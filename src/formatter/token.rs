@@ -45,67 +45,61 @@ pub fn tokenize(text: &str) -> Vec<Token<'_>> {
     let mut chars = text.char_indices().peekable();
 
     while let Some(&(start, ch)) = chars.peek() {
-        if ch.is_whitespace() {
-            chars.next();
-            continue;
-        }
-
-        if is_ident_start(ch) {
-            chars.next();
-            let mut end = start + ch.len_utf8();
-            while let Some(&(_, c)) = chars.peek() {
-                if !is_ident_continue(c) {
-                    break;
+        match ch {
+            ch if ch.is_whitespace() => {
+                chars.next();
+            }
+            '"' => {
+                let end = scan_string(&mut chars, start, false);
+                tokens.push(Token::Str(&text[start..end]));
+            }
+            '@' if matches!(peek_nth(&chars, 1), Some('"')) => {
+                chars.next();
+                let end = scan_string(&mut chars, start, true);
+                tokens.push(Token::Str(&text[start..end]));
+            }
+            '\'' => {
+                let end = scan_char(&mut chars, start);
+                tokens.push(Token::Char(&text[start..end]));
+            }
+            ch if is_ident_start(ch) => {
+                chars.next();
+                let mut end = start + ch.len_utf8();
+                while let Some(&(_, c)) = chars.peek() {
+                    if !is_ident_continue(c) {
+                        break;
+                    }
+                    end += c.len_utf8();
+                    chars.next();
                 }
-                end += c.len_utf8();
-                chars.next();
+                tokens.push(Token::Ident(&text[start..end]));
             }
-            tokens.push(Token::Ident(&text[start..end]));
-            continue;
-        }
-
-        if ch.is_ascii_digit() {
-            let end = scan_number(&mut chars, start);
-            let is_float = text[start..end].contains('.')
-                || text[start..end].contains(['e', 'E'])
-                || text[start..end].ends_with(['f', 'F', 'd', 'D', 'm', 'M']);
-            tokens.push(if is_float {
-                Token::Float(&text[start..end])
-            } else {
-                Token::Int(&text[start..end])
-            });
-            continue;
-        }
-
-        if ch == '"' {
-            let end = scan_string(&mut chars, start, false);
-            tokens.push(Token::Str(&text[start..end]));
-            continue;
-        }
-
-        if ch == '@' && matches!(peek_nth(&chars, 1), Some('"')) {
-            chars.next();
-            let end = scan_string(&mut chars, start, true);
-            tokens.push(Token::Str(&text[start..end]));
-            continue;
-        }
-
-        if ch == '\'' {
-            let end = scan_char(&mut chars, start);
-            tokens.push(Token::Char(&text[start..end]));
-            continue;
-        }
-
-        if let Some(op) = MULTI_CHAR_OPS.iter().find(|op| text[start..].starts_with(*op)) {
-            for _ in 0..op.chars().count() {
-                chars.next();
+            ch if ch.is_ascii_digit() => {
+                let end = scan_number(&mut chars, start);
+                let is_float = text[start..end].contains('.')
+                    || text[start..end].contains(['e', 'E'])
+                    || text[start..end].ends_with(['f', 'F', 'd', 'D', 'm', 'M']);
+                tokens.push(if is_float {
+                    Token::Float(&text[start..end])
+                } else {
+                    Token::Int(&text[start..end])
+                });
             }
-            tokens.push(Token::Op(op));
-            continue;
+            _ => {
+                if let Some(op) = MULTI_CHAR_OPS
+                    .iter()
+                    .find(|op| text[start..].starts_with(*op))
+                {
+                    for _ in 0..op.chars().count() {
+                        chars.next();
+                    }
+                    tokens.push(Token::Op(op));
+                } else {
+                    tokens.push(Token::Symbol(ch));
+                    chars.next();
+                }
+            }
         }
-
-        tokens.push(Token::Symbol(ch));
-        chars.next();
     }
 
     tokens
