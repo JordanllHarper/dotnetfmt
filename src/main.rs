@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::File { path } => {
             let contents = fs::read_to_string(&path)?;
             let formatted = format(&contents, &config)?;
-            print!("{}", formatted);
+            fs::write(&path, formatted)?;
             Ok(())
         }
         Command::Workspace { .. } => Err("workspace formatting isn't implemented yet".into()),
