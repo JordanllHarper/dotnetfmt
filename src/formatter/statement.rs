@@ -3,14 +3,27 @@
 //! expression parser in [`super::expr`].
 
 use crate::formatter::expr::{parse_expression, render};
-use crate::formatter::token::{as_ident, tokenize, Cursor, Token};
+use crate::formatter::token::{Cursor, Token, as_ident, tokenize};
 
 /// Modifiers recognized ahead of a method's return type. Not
 /// exhaustive -- just the common ones a "basic" formatter should not
 /// choke on.
 const MODIFIERS: &[&str] = &[
-    "public", "private", "protected", "internal", "static", "virtual", "override", "sealed",
-    "abstract", "async", "new", "partial", "extern", "unsafe", "readonly",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "virtual",
+    "override",
+    "sealed",
+    "abstract",
+    "async",
+    "new",
+    "partial",
+    "extern",
+    "unsafe",
+    "readonly",
 ];
 
 /// Parses a type reference: a base identifier, an optional generic
@@ -190,6 +203,157 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
     ))
 }
 
+/// Formats a class declaration: `modifiers* class Name<T, ...>? (:
+/// Base, ...)?`. `tokens` must not include a trailing `{`, if the
+/// source had one -- the caller reattaches it.
+fn try_format_class_declaration(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    let mut modifiers = Vec::new();
+    loop {
+        let checkpoint = c.save();
+        match c.peek().and_then(as_ident) {
+            Some(word) if MODIFIERS.contains(&word) => {
+                c.next();
+                modifiers.push(word.to_string());
+            }
+            _ => {
+                c.restore(checkpoint);
+                break;
+            }
+        }
+    }
+
+    if as_ident(c.next()?) != Some("class") {
+        return None;
+    }
+
+    let name = parse_type(&mut c)?;
+
+    let mut bases = Vec::new();
+    if matches!(c.peek(), Some(Token::Symbol(':'))) {
+        c.next();
+        loop {
+            bases.push(parse_type(&mut c)?);
+            match c.peek() {
+                Some(Token::Symbol(',')) => {
+                    c.next();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    let modifiers = modifiers
+        .iter()
+        .map(|m| format!("{m} "))
+        .collect::<String>();
+    let base_list = if bases.is_empty() {
+        String::new()
+    } else {
+        format!(" : {}", bases.join(", "))
+    };
+    Some(format!("{modifiers}class {name}{base_list}"))
+}
+
+/// Formats a `keyword (condition)` statement header -- the shape
+/// shared by `if` and `while`. `tokens` must not include a trailing
+/// `{`, if the source had one -- the caller reattaches it.
+fn try_format_paren_condition(keyword: &'static str, tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some(keyword) {
+        return None;
+    }
+
+    if !matches!(c.next()?, Token::Symbol('(')) {
+        return None;
+    }
+
+    let condition = parse_expression(&mut c)?;
+
+    if !matches!(c.next()?, Token::Symbol(')')) {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(format!("{keyword} ({})", render(&condition)))
+}
+
+/// Formats an `if` statement's header: `if (condition)`. `tokens`
+/// must not include a trailing `{`, if the source had one -- the
+/// caller reattaches it.
+fn try_format_if_statement(tokens: &[Token]) -> Option<String> {
+    try_format_paren_condition("if", tokens)
+}
+
+/// Formats a `while` statement's header: `while (condition)`.
+/// `tokens` must not include a trailing `{`, if the source had one --
+/// the caller reattaches it.
+fn try_format_while_statement(tokens: &[Token]) -> Option<String> {
+    try_format_paren_condition("while", tokens)
+}
+
+/// Formats an `else` statement's header: `else` or `else if
+/// (condition)`. `tokens` must not include a trailing `{`, if the
+/// source had one -- the caller reattaches it.
+fn try_format_else_statement(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("else") {
+        return None;
+    }
+
+    if c.at_end() {
+        return Some("else".to_string());
+    }
+
+    let if_header = try_format_if_statement(&tokens[1..])?;
+    Some(format!("else {if_header}"))
+}
+
+/// Formats a `do` statement's header: the bare `do` keyword that
+/// opens a `do`/`while` loop. `tokens` must not include a trailing
+/// `{`, if the source had one -- the caller reattaches it.
+fn try_format_do_statement(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("do") {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some("do".to_string())
+}
+
+/// Formats the closing `while (condition);` of a `do`/`while` loop.
+/// `tokens` must not include the trailing `;`.
+fn try_format_do_while_tail(tokens: &[Token]) -> Option<String> {
+    let header = try_format_paren_condition("while", tokens)?;
+    Some(format!("{header};"))
+}
+
+/// Formats the combined `} while (condition);` that closes a
+/// `do`/`while` loop when `while` shares a line with the closing
+/// brace. `tokens` must not include the trailing `;`.
+fn try_format_do_while_close(tokens: &[Token]) -> Option<String> {
+    if !matches!(tokens.first(), Some(Token::Symbol('}'))) {
+        return None;
+    }
+    let tail = try_format_do_while_tail(&tokens[1..])?;
+    Some(format!("}} {tail}"))
+}
+
 /// Formats a single logical line of statement content (already
 /// stripped of leading/trailing whitespace and any indentation).
 /// Returns `None` when nothing about the content is recognized, in
@@ -202,7 +366,10 @@ pub fn format_statement_content(content: &str) -> Option<String> {
 
     if matches!(tokens.last(), Some(Token::Symbol(';'))) {
         let body = &tokens[..tokens.len() - 1];
-        return try_format_declaration(body).or_else(|| try_format_expression_statement(body));
+        return try_format_declaration(body)
+            .or_else(|| try_format_do_while_tail(body))
+            .or_else(|| try_format_do_while_close(body))
+            .or_else(|| try_format_expression_statement(body));
     }
 
     if tokens.len() == 1 && matches!(tokens[0], Token::Symbol('{') | Token::Symbol('}')) {
@@ -214,7 +381,12 @@ pub fn format_statement_content(content: &str) -> Option<String> {
         _ => (&tokens[..], false),
     };
 
-    let signature = try_format_method_signature(sig_tokens)?;
+    let signature = try_format_method_signature(sig_tokens)
+        .or_else(|| try_format_class_declaration(sig_tokens))
+        .or_else(|| try_format_if_statement(sig_tokens))
+        .or_else(|| try_format_else_statement(sig_tokens))
+        .or_else(|| try_format_while_statement(sig_tokens))
+        .or_else(|| try_format_do_statement(sig_tokens))?;
     Some(if trailing_brace {
         format!("{signature} {{")
     } else {

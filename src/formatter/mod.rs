@@ -15,7 +15,7 @@ mod token;
 use std::fmt;
 
 use crate::editorconfig::{EditorConfig, IndentSize, IndentStyle};
-use token::{tokenize, Token};
+use token::{Token, tokenize};
 
 /// Errors produced while formatting.
 ///
@@ -54,15 +54,17 @@ pub fn format(contents: &str, config: &EditorConfig) -> Result<String, FormatErr
 }
 
 fn indent_unit(config: &EditorConfig) -> String {
+    let columns = match config.indent_size {
+        IndentSize::Columns(n) => n,
+        IndentSize::UseTabWidth => config.tab_width,
+    };
     match config.indent_style {
-        IndentStyle::Tab => "\t".to_string(),
-        IndentStyle::Space => {
-            let columns = match config.indent_size {
-                IndentSize::Columns(n) => n,
-                IndentSize::UseTabWidth => config.tab_width,
-            };
-            " ".repeat(columns as usize)
+        IndentStyle::Tab => {
+            let tab_width = config.tab_width.max(1);
+            let tabs = columns.div_ceil(tab_width).max(1);
+            "\t".repeat(tabs as usize)
         }
+        IndentStyle::Space => " ".repeat(columns as usize),
     }
 }
 
@@ -79,8 +81,14 @@ fn format_line(line: &str, depth: i32, indent_unit: &str) -> (String, i32) {
     let starts_with_close = matches!(tokens.first(), Some(Token::Symbol('}')));
     let render_depth = if starts_with_close { depth - 1 } else { depth }.max(0);
 
-    let opens = tokens.iter().filter(|t| matches!(t, Token::Symbol('{'))).count() as i32;
-    let closes = tokens.iter().filter(|t| matches!(t, Token::Symbol('}'))).count() as i32;
+    let opens = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::Symbol('{')))
+        .count() as i32;
+    let closes = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::Symbol('}')))
+        .count() as i32;
     let new_depth = (depth + opens - closes).max(0);
 
     let content =
@@ -174,6 +182,19 @@ mod tests {
         };
         let input = "void Foo()\r\n{\r\nvar x=5;\r\n}";
         let expected = "void Foo()\r\n{\r\n\tvar x = 5;\r\n}";
+        assert_eq!(format(input, &config).unwrap(), expected);
+    }
+
+    #[test]
+    fn tab_indent_uses_multiple_tabs_when_narrower_than_indent_size() {
+        // indent_size=4 columns, tab_width=2 columns/tab -> 2 tabs per level.
+        let config = EditorConfig {
+            indent_style: IndentStyle::Tab,
+            indent_size: IndentSize::Columns(4),
+            tab_width: 2,
+        };
+        let input = "void Foo()\r\n{\r\nvar x=5;\r\n}";
+        let expected = "void Foo()\r\n{\r\n\t\tvar x = 5;\r\n}";
         assert_eq!(format(input, &config).unwrap(), expected);
     }
 
@@ -399,10 +420,7 @@ mod tests {
 
     #[test]
     fn method_signature_with_params_is_formatted() {
-        assert_eq!(
-            fmt("void Foo(int x,string y)"),
-            "void Foo(int x, string y)"
-        );
+        assert_eq!(fmt("void Foo(int x,string y)"), "void Foo(int x, string y)");
     }
 
     #[test]
@@ -415,10 +433,235 @@ mod tests {
 
     #[test]
     fn method_signature_with_default_parameter_is_formatted() {
+        assert_eq!(fmt("void Foo(int x=5)"), "void Foo(int x = 5)");
+    }
+
+    // --- class declarations ------------------------------------------
+
+    #[test]
+    fn class_declaration_is_formatted() {
+        assert_eq!(fmt("class   Foo"), "class Foo");
+    }
+
+    #[test]
+    fn class_declaration_with_trailing_brace_is_formatted() {
         assert_eq!(
-            fmt("void Foo(int x=5)"),
-            "void Foo(int x = 5)"
+            fmt("public static class  Program  {"),
+            "public static class Program {"
         );
+    }
+
+    #[test]
+    fn class_declaration_with_base_list_is_formatted() {
+        assert_eq!(
+            fmt("public class Foo:Bar,IBaz"),
+            "public class Foo : Bar, IBaz"
+        );
+    }
+
+    #[test]
+    fn generic_class_declaration_is_formatted() {
+        assert_eq!(fmt("class Foo<T>"), "class Foo<T>");
+    }
+
+    // --- if statements --------------------------------------------------
+
+    #[test]
+    fn if_statement_condition_is_formatted() {
+        assert_eq!(fmt("if(sum>0)"), "if (sum > 0)");
+    }
+
+    #[test]
+    fn if_statement_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("if (sum>0){"), "if (sum > 0) {");
+    }
+
+    #[test]
+    fn if_statement_with_logical_condition_is_formatted() {
+        assert_eq!(fmt("if(sum!=0&&sum<100)"), "if (sum != 0 && sum < 100)");
+    }
+
+    #[test]
+    fn malformed_if_statement_is_left_alone() {
+        assert_eq!(fmt("if (sum>0 extra"), "if (sum>0 extra");
+    }
+
+    // --- else statements --------------------------------------------------
+
+    #[test]
+    fn bare_else_is_formatted() {
+        assert_eq!(fmt("else"), "else");
+    }
+
+    #[test]
+    fn bare_else_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("else{"), "else {");
+    }
+
+    #[test]
+    fn else_if_condition_is_formatted() {
+        assert_eq!(fmt("else   if(sum>0)"), "else if (sum > 0)");
+    }
+
+    #[test]
+    fn else_if_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("else if(sum>0){"), "else if (sum > 0) {");
+    }
+
+    #[test]
+    fn malformed_else_statement_is_left_alone() {
+        assert_eq!(fmt("else while (true)"), "else while (true)");
+    }
+
+    #[test]
+    fn bare_else_on_its_own_line_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "if(x>0)\r\n",
+            "{\r\n",
+            "Console.WriteLine(\"positive\");\r\n",
+            "}\r\n",
+            "else\r\n",
+            "{\r\n",
+            "Console.WriteLine(\"non-positive\");\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    if (x > 0)\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(\"positive\");\r\n",
+            "    }\r\n",
+            "    else\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(\"non-positive\");\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    // --- while loops -----------------------------------------------------
+
+    #[test]
+    fn while_statement_condition_is_formatted() {
+        assert_eq!(fmt("while(sum>0)"), "while (sum > 0)");
+    }
+
+    #[test]
+    fn while_statement_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("while (sum>0){"), "while (sum > 0) {");
+    }
+
+    #[test]
+    fn malformed_while_statement_is_left_alone() {
+        assert_eq!(fmt("while (sum>0 extra"), "while (sum>0 extra");
+    }
+
+    #[test]
+    fn while_loop_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "while(sum>0)\r\n",
+            "{\r\n",
+            "sum-=1;\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    while (sum > 0)\r\n",
+            "    {\r\n",
+            "        sum -= 1;\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    // --- do/while loops ----------------------------------------------
+
+    #[test]
+    fn bare_do_is_formatted() {
+        assert_eq!(fmt("do"), "do");
+    }
+
+    #[test]
+    fn bare_do_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("do{"), "do {");
+    }
+
+    #[test]
+    fn do_while_tail_condition_is_formatted() {
+        assert_eq!(fmt("while(sum>0);"), "while (sum > 0);");
+    }
+
+    #[test]
+    fn malformed_do_while_tail_is_left_alone() {
+        assert_eq!(fmt("while(sum>0 extra);"), "while(sum>0 extra);");
+    }
+
+    #[test]
+    fn do_while_loop_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "do\r\n",
+            "{\r\n",
+            "sum-=1;\r\n",
+            "}\r\n",
+            "while(sum>0);\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    do\r\n",
+            "    {\r\n",
+            "        sum -= 1;\r\n",
+            "    }\r\n",
+            "    while (sum > 0);\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    #[test]
+    fn combined_do_while_close_condition_is_formatted() {
+        assert_eq!(fmt("} while(sum>0);"), "} while (sum > 0);");
+    }
+
+    #[test]
+    fn malformed_combined_do_while_close_is_left_alone() {
+        assert_eq!(fmt("} while(sum>0 extra);"), "} while(sum>0 extra);");
+    }
+
+    #[test]
+    fn do_while_loop_with_combined_close_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "do\r\n",
+            "{\r\n",
+            "sum-=1;\r\n",
+            "} while(sum>0);\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    do\r\n",
+            "    {\r\n",
+            "        sum -= 1;\r\n",
+            "    } while (sum > 0);\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
     }
 
     #[test]
@@ -441,11 +684,9 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_lines_that_look_like_blocks_are_left_alone_but_reindented() {
-        // `if (...)` isn't a declaration or a method signature, so its
-        // content is untouched -- only its indentation is recomputed.
+    fn if_blocks_are_reformatted_and_reindented() {
         let input = "void Foo()\r\n{\r\nif (x>0)\r\n{\r\n}\r\n}";
-        let expected = "void Foo()\r\n{\r\n    if (x>0)\r\n    {\r\n    }\r\n}";
+        let expected = "void Foo()\r\n{\r\n    if (x > 0)\r\n    {\r\n    }\r\n}";
         assert_eq!(fmt(input), expected);
     }
 }

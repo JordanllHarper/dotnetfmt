@@ -106,6 +106,8 @@ pub fn tokenize(text: &str) -> Vec<Token<'_>> {
 }
 
 fn peek_nth(chars: &Peekable<CharIndices<'_>>, n: usize) -> Option<char> {
+    // Cheap: `CharIndices` just wraps a pointer/length over `text`, so
+    // cloning it doesn't allocate or copy the underlying string.
     chars.clone().nth(n).map(|(_, c)| c)
 }
 
