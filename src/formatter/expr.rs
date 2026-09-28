@@ -27,6 +27,10 @@ pub enum Expr {
     Member(Box<Expr>, String),
     Call(Box<Expr>, Vec<Expr>),
     Unary(&'static str, Box<Expr>),
+    /// Postfix `++`/`--`, e.g. `i++`. Kept distinct from `Unary`
+    /// (prefix) since the operator renders after the operand and, per
+    /// C#'s grammar, can't itself be chained further.
+    PostfixUnary(&'static str, Box<Expr>),
     Binary(&'static str, Box<Expr>, Box<Expr>),
     Assign(&'static str, Box<Expr>, Box<Expr>),
 }
@@ -41,6 +45,7 @@ pub fn render(expr: &Expr) -> String {
             format!("{}({})", render(callee), args)
         }
         Expr::Unary(op, operand) => format!("{op}{}", render(operand)),
+        Expr::PostfixUnary(op, operand) => format!("{}{op}", render(operand)),
         Expr::Binary(op, left, right) => format!("{} {op} {}", render(left), render(right)),
         Expr::Assign(op, left, right) => format!("{} {op} {}", render(left), render(right)),
     }
@@ -190,6 +195,12 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
             _ => break,
         }
     }
+
+    if let Some(Token::Op(op @ ("++" | "--"))) = c.peek() {
+        c.next();
+        return Some(Expr::PostfixUnary(op, Box::new(expr)));
+    }
+
     Some(expr)
 }
 

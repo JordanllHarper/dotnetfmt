@@ -7,9 +7,10 @@ they're easy to pick up later instead of being rediscovered.
 ## Expressions
 
 - **Ternary conditional** (`cond ? a : b`) — not in the parsed grammar.
-- **Bitwise/shift operators** (`&`, `|`, `^`, `<<`, `>>`), **null
-  coalescing** (`??`), and **postfix `++`/`--`** — not in the
-  expression grammar (prefix `++`/`--` is supported).
+- **Bitwise/shift operators** (`&`, `|`, `^`, `<<`, `>>`) and **null
+  coalescing** (`??`) — not in the expression grammar.
+- **Indexers** (`list[i]`, `map["key"]`) — `expr.rs`'s postfix parser
+  only chains `.` member access and `(...)` calls, not `[...]`.
 - **String interpolation** (`$"{x}"`) — tokenizes as a bare `$` symbol
   followed by an ordinary string; the interpolation holes aren't
   parsed as expressions.
@@ -39,6 +40,16 @@ they're easy to pick up later instead of being rediscovered.
   the name, so `public Foo(int x)` doesn't parse as a signature.
 - **Generic methods** (`T Foo<T>(T x)`) — no generic parameter list
   after the method name.
+
+## Control flow
+
+- **`for` loop init with no type** — `for (i = 0, j = 10; ...; ...)`
+  isn't recognized; only a declaration (`for (int i = 0, j = 10; ...)`)
+  is, since `format_for_init` only tries `try_format_declarators`.
+- **`foreach` with tuple deconstruction** (`foreach (var (k, v) in
+  dict)`) — the element position only accepts `type name`, not a
+  tuple pattern.
+- **`switch` statements** — not implemented at all.
 
 ## Formatting / layout
 

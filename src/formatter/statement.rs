@@ -78,13 +78,13 @@ fn parse_type(c: &mut Cursor) -> Option<String> {
     Some(rendered)
 }
 
-/// Formats a variable declaration statement, e.g. `int x=1,y=2` or
-/// `var x=someFunction()`. `tokens` must not include the trailing
-/// `;`. Returns `None` (rather than guessing) for anything that
-/// isn't unambiguously a declaration -- notably, it requires a type
+/// Formats a variable declaration's type and declarator list, e.g.
+/// `int x=1,y=2` -> `int x = 1, y = 2`, without a trailing `;`.
+/// Returns `None` (rather than guessing) for anything that isn't
+/// unambiguously a declaration -- notably, it requires a type
 /// followed directly by an identifier, which an expression statement
 /// never has.
-pub fn try_format_declaration(tokens: &[Token]) -> Option<String> {
+fn try_format_declarators(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
     let type_name = parse_type(&mut c)?;
 
@@ -117,7 +117,14 @@ pub fn try_format_declaration(tokens: &[Token]) -> Option<String> {
         return None;
     }
 
-    Some(format!("{type_name} {};", declarators.join(", ")))
+    Some(format!("{type_name} {}", declarators.join(", ")))
+}
+
+/// Formats a variable declaration statement, e.g. `int x=1,y=2` or
+/// `var x=someFunction()`. `tokens` must not include the trailing
+/// `;`.
+pub fn try_format_declaration(tokens: &[Token]) -> Option<String> {
+    Some(format!("{};", try_format_declarators(tokens)?))
 }
 
 /// Formats an expression-statement, e.g. `Foo(a,b)` or `x+=1`.
@@ -354,6 +361,144 @@ fn try_format_do_while_close(tokens: &[Token]) -> Option<String> {
     Some(format!("}} {tail}"))
 }
 
+/// Formats a `foreach` statement's header: `foreach (type name in
+/// collection)`. `tokens` must not include a trailing `{`, if the
+/// source had one -- the caller reattaches it.
+fn try_format_foreach_statement(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("foreach") {
+        return None;
+    }
+
+    if !matches!(c.next()?, Token::Symbol('(')) {
+        return None;
+    }
+
+    let element_type = parse_type(&mut c)?;
+    let name = as_ident(c.next()?)?.to_string();
+
+    if as_ident(c.next()?) != Some("in") {
+        return None;
+    }
+
+    let collection = parse_expression(&mut c)?;
+
+    if !matches!(c.next()?, Token::Symbol(')')) {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(format!(
+        "foreach ({element_type} {name} in {})",
+        render(&collection)
+    ))
+}
+
+/// Splits a `for` header's inner tokens (everything after the
+/// opening `(`) into its `init` and `condition` segments, plus
+/// everything after the second `;` (the increment list, followed by
+/// the header's closing `)`). `;` can't appear inside an expression
+/// or type in C#, so a plain linear scan (no paren/bracket depth
+/// tracking) safely finds the header's own top-level separators.
+fn split_for_header<'a, 'b>(
+    tokens: &'b [Token<'a>],
+) -> Option<(&'b [Token<'a>], &'b [Token<'a>], &'b [Token<'a>])> {
+    let first_semi = tokens
+        .iter()
+        .position(|t| matches!(t, Token::Symbol(';')))?;
+    let (init, after_init) = (&tokens[..first_semi], &tokens[first_semi + 1..]);
+
+    let second_semi = after_init
+        .iter()
+        .position(|t| matches!(t, Token::Symbol(';')))?;
+    let (condition, after_condition) = (&after_init[..second_semi], &after_init[second_semi + 1..]);
+
+    Some((init, condition, after_condition))
+}
+
+/// Formats a `for` loop's optional init segment: empty, or a
+/// declaration (reusing [`try_format_declarators`]).
+fn format_for_init(tokens: &[Token]) -> Option<String> {
+    if tokens.is_empty() {
+        return Some(String::new());
+    }
+    try_format_declarators(tokens)
+}
+
+/// Formats a `for` loop's optional condition segment: empty, or a
+/// single expression that must consume the whole segment.
+fn format_for_condition(tokens: &[Token]) -> Option<String> {
+    if tokens.is_empty() {
+        return Some(String::new());
+    }
+    let mut c = Cursor::new(tokens);
+    let expr = parse_expression(&mut c)?;
+    if !c.at_end() {
+        return None;
+    }
+    Some(render(&expr))
+}
+
+/// Formats a `for` loop's comma-separated increment list and consumes
+/// the header's closing `)`. `tokens` starts right after the second
+/// `;` and must contain nothing but the increment expressions
+/// followed by `)`.
+fn format_for_increment(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    let mut increments = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol(')'))) {
+        loop {
+            increments.push(render(&parse_expression(&mut c)?));
+            match c.peek() {
+                Some(Token::Symbol(',')) => {
+                    c.next();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    if !matches!(c.next()?, Token::Symbol(')')) {
+        return None;
+    }
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(increments.join(", "))
+}
+
+/// Formats a C-style `for` statement's header: `for (init;
+/// condition; increment)`, where `init` is an optional declaration
+/// and `increment` is a comma-separated list of expressions; any of
+/// the three parts may be empty (e.g. `for (;;)`). `tokens` must not
+/// include a trailing `{`, if the source had one -- the caller
+/// reattaches it.
+fn try_format_for_statement(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("for") {
+        return None;
+    }
+
+    if !matches!(c.next()?, Token::Symbol('(')) {
+        return None;
+    }
+
+    let (init_tokens, condition_tokens, increment_tokens) = split_for_header(&tokens[c.save()..])?;
+
+    let init = format_for_init(init_tokens)?;
+    let condition = format_for_condition(condition_tokens)?;
+    let increment = format_for_increment(increment_tokens)?;
+
+    Some(format!("for ({init}; {condition}; {increment})"))
+}
+
 /// Formats a single logical line of statement content (already
 /// stripped of leading/trailing whitespace and any indentation).
 /// Returns `None` when nothing about the content is recognized, in
@@ -386,7 +531,9 @@ pub fn format_statement_content(content: &str) -> Option<String> {
         .or_else(|| try_format_if_statement(sig_tokens))
         .or_else(|| try_format_else_statement(sig_tokens))
         .or_else(|| try_format_while_statement(sig_tokens))
-        .or_else(|| try_format_do_statement(sig_tokens))?;
+        .or_else(|| try_format_do_statement(sig_tokens))
+        .or_else(|| try_format_foreach_statement(sig_tokens))
+        .or_else(|| try_format_for_statement(sig_tokens))?;
     Some(if trailing_brace {
         format!("{signature} {{")
     } else {

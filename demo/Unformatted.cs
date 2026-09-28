@@ -24,7 +24,15 @@ do
 sum-=1;
 } while(sum>0);
 List<int> seen=new List<int>();
+foreach(int   n   in   seen)
+{
+Console.WriteLine(n);
+}
 var ok=sum!=0&&sum<100;
+for(int   i=0;i<seen.Count;i++)
+{
+Console.WriteLine(i);
+}
 sum+=1;
 return sum;
 }

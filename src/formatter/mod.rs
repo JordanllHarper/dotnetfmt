@@ -664,6 +664,181 @@ mod tests {
         assert_eq!(fmt(input), expected);
     }
 
+    // --- foreach loops -----------------------------------------------
+
+    #[test]
+    fn foreach_statement_is_formatted() {
+        assert_eq!(
+            fmt("foreach(int   x   in   items)"),
+            "foreach (int x in items)"
+        );
+    }
+
+    #[test]
+    fn foreach_statement_with_var_is_formatted() {
+        assert_eq!(fmt("foreach(var x in items)"), "foreach (var x in items)");
+    }
+
+    #[test]
+    fn foreach_statement_with_trailing_brace_is_formatted() {
+        assert_eq!(
+            fmt("foreach (var x in items){"),
+            "foreach (var x in items) {"
+        );
+    }
+
+    #[test]
+    fn foreach_statement_with_complex_collection_is_formatted() {
+        assert_eq!(
+            fmt("foreach(var x in list.GetItems())"),
+            "foreach (var x in list.GetItems())"
+        );
+    }
+
+    #[test]
+    fn foreach_statement_with_custom_type_is_formatted() {
+        assert_eq!(
+            fmt("foreach(Customer c   in   customers)"),
+            "foreach (Customer c in customers)"
+        );
+    }
+
+    #[test]
+    fn foreach_statement_with_generic_type_is_formatted() {
+        assert_eq!(
+            fmt("foreach(List<int> nums in nestedLists)"),
+            "foreach (List<int> nums in nestedLists)"
+        );
+    }
+
+    #[test]
+    fn foreach_loop_with_typed_element_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "foreach(string   name   in   names)\r\n",
+            "{\r\n",
+            "Console.WriteLine(name);\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    foreach (string name in names)\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(name);\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    #[test]
+    fn malformed_foreach_statement_is_left_alone() {
+        assert_eq!(fmt("foreach (var x items)"), "foreach (var x items)");
+    }
+
+    #[test]
+    fn foreach_loop_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "foreach(var x   in   items)\r\n",
+            "{\r\n",
+            "Console.WriteLine(x);\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    foreach (var x in items)\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(x);\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    // --- C-style for loops -------------------------------------------
+
+    #[test]
+    fn for_statement_is_formatted() {
+        assert_eq!(
+            fmt("for(int   i=0;i<10;i++)"),
+            "for (int i = 0; i < 10; i++)"
+        );
+    }
+
+    #[test]
+    fn for_statement_with_trailing_brace_is_formatted() {
+        assert_eq!(
+            fmt("for (int i = 0; i < 10; i++){"),
+            "for (int i = 0; i < 10; i++) {"
+        );
+    }
+
+    #[test]
+    fn for_statement_with_multiple_declarators_and_increments_is_formatted() {
+        assert_eq!(
+            fmt("for(int i=0,j=10;i<j;i++,j--)"),
+            "for (int i = 0, j = 10; i < j; i++, j--)"
+        );
+    }
+
+    #[test]
+    fn for_statement_with_empty_parts_is_formatted() {
+        assert_eq!(fmt("for(;;)"), "for (; ; )");
+    }
+
+    #[test]
+    fn for_statement_with_empty_init_is_formatted() {
+        assert_eq!(fmt("for(;i<10;i++)"), "for (; i < 10; i++)");
+    }
+
+    #[test]
+    fn for_statement_with_empty_condition_is_formatted() {
+        assert_eq!(fmt("for(int i=0;;i++)"), "for (int i = 0; ; i++)");
+    }
+
+    #[test]
+    fn for_statement_with_empty_increment_is_formatted() {
+        assert_eq!(fmt("for(int i=0;i<10;)"), "for (int i = 0; i < 10; )");
+    }
+
+    #[test]
+    fn malformed_for_statement_is_left_alone() {
+        assert_eq!(
+            fmt("for(int i=0;i<10 extra;i++)"),
+            "for(int i=0;i<10 extra;i++)"
+        );
+    }
+
+    #[test]
+    fn for_loop_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "for(int   i=0;i<10;i++)\r\n",
+            "{\r\n",
+            "Console.WriteLine(i);\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    for (int i = 0; i < 10; i++)\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(i);\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
     #[test]
     fn full_method_body_is_reindented_and_reformatted() {
         let input = concat!(
