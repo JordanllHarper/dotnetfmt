@@ -17,16 +17,10 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Object creation
 
-- **`new Type(...)` / `new()` object-creation expressions.** e.g.
-  `var x=new List<int>();` is not reformatted. The expression parser
-  (`formatter/expr.rs`) has no primary-expression case for `new`, so
-  `new` parses as a bare identifier and the trailing `Type(...)` is
-  left over, failing the parse. Adding it means parsing a type name
-  after `new` (reusing `statement::parse_type`, which would need to
-  become `pub(super)` or move to a module shared by both `expr.rs` and
-  `statement.rs`) and a `New(Option<String>, Vec<Expr>)` AST node.
 - **Array creation / initializers** (`new int[5]`, `new[] {1, 2, 3}`,
-  collection/object initializers `{ ... }`).
+  collection/object initializers `{ ... }`) — `expr.rs`'s `new` case
+  only recognizes `new Type(args)`/`new(args)` constructor-style
+  invocation, not the `[...]`/`{...}` forms.
 
 ## Types & declarations
 

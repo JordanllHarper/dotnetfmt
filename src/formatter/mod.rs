@@ -406,6 +406,58 @@ mod tests {
         assert_eq!(fmt("Customer    c;"), "Customer c;");
     }
 
+    // --- object creation -----------------------------------------------
+
+    #[test]
+    fn object_creation_with_no_args_is_formatted() {
+        assert_eq!(fmt("var x=new Foo();"), "var x = new Foo();");
+    }
+
+    #[test]
+    fn object_creation_with_args_is_formatted() {
+        assert_eq!(fmt("var x=new Foo(1,2);"), "var x = new Foo(1, 2);");
+    }
+
+    #[test]
+    fn object_creation_with_generic_type_is_formatted() {
+        assert_eq!(
+            fmt("var seen=new List<int>();"),
+            "var seen = new List<int>();"
+        );
+    }
+
+    #[test]
+    fn target_typed_object_creation_is_formatted() {
+        assert_eq!(fmt("List<int>   x=new();"), "List<int> x = new();");
+    }
+
+    #[test]
+    fn object_creation_as_call_argument_is_formatted() {
+        assert_eq!(fmt("Foo(new   Bar( ));"), "Foo(new Bar());");
+    }
+
+    #[test]
+    fn object_creation_with_chained_member_access_is_formatted() {
+        assert_eq!(
+            fmt("var x=new Foo().DoThing();"),
+            "var x = new Foo().DoThing();"
+        );
+    }
+
+    #[test]
+    fn array_creation_is_not_recognized() {
+        // Array creation isn't in the parsed grammar -- only `new
+        // Type(...)`/`new(...)` object creation is.
+        assert_eq!(fmt("var x=new int[5];"), "var x=new int[5];");
+    }
+
+    #[test]
+    fn object_initializer_is_not_recognized() {
+        // Object initializers (`new Foo { ... }`) aren't in the
+        // parsed grammar either.
+        assert_eq!(fmt("var x=new Foo{X=1};"), "var x=new Foo{X=1};");
+    }
+
     // --- method / function declarations ------------------------------------
 
     #[test]

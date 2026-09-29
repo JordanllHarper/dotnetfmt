@@ -23,7 +23,7 @@ public static class Program
 				{
 						sum -= 1;
 				} while (sum > 0);
-				List<int> seen=new List<int>();
+				List<int> seen = new List<int>();
 				foreach (int n in seen)
 				{
 						Console.WriteLine(n);

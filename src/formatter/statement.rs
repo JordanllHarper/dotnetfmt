@@ -33,7 +33,11 @@ const MODIFIERS: &[&str] = &[
 /// This only handles "type position" parsing (called where the
 /// grammar already expects a type), so treating `<` as opening
 /// generic arguments rather than a relational operator is safe.
-fn parse_type(c: &mut Cursor) -> Option<String> {
+///
+/// `pub(super)`: also used by `expr.rs`'s `new Type(...)` parsing,
+/// where `<` is likewise unambiguous (only ever a generic-argument
+/// opener in the type position right after `new`).
+pub(super) fn parse_type(c: &mut Cursor) -> Option<String> {
     let mut rendered = as_ident(c.next()?)?.to_string();
 
     if matches!(c.peek(), Some(Token::Symbol('<'))) {

@@ -2,11 +2,13 @@
 //! expressions, and a matching pretty-printer.
 //!
 //! Scope is intentionally limited to "basic" C#: literals, identifiers,
-//! member access, calls, unary `!`/`-`/`+`/prefix `++`/`--`,
-//! arithmetic, relational, equality, `&&`/`||`, and assignment
-//! (including compound assignment). Anything outside that (ternary,
-//! `new`, indexers, lambdas, string interpolation, ...) simply fails
-//! to parse, and the caller falls back to leaving the source untouched.
+//! member access, calls, `new Type(...)`/`new(...)` object creation,
+//! unary `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic,
+//! relational, equality, `&&`/`||`, and assignment (including compound
+//! assignment). Anything outside that (ternary, array creation/object
+//! initializers, indexers, lambdas, string interpolation, ...) simply
+//! fails to parse, and the caller falls back to leaving the source
+//! untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -26,6 +28,11 @@ pub enum Expr {
     Paren(Box<Expr>),
     Member(Box<Expr>, String),
     Call(Box<Expr>, Vec<Expr>),
+    /// `new Type(args)`, or `new(args)` when the type is inferred
+    /// from context (target-typed `new`). Array creation
+    /// (`new int[5]`) and object/collection initializers (`new Foo {
+    /// ... }`) aren't represented -- see [`parse_primary`].
+    New(Option<String>, Vec<Expr>),
     Unary(&'static str, Box<Expr>),
     /// Postfix `++`/`--`, e.g. `i++`. Kept distinct from `Unary`
     /// (prefix) since the operator renders after the operand and, per
@@ -43,6 +50,13 @@ pub fn render(expr: &Expr) -> String {
         Expr::Call(callee, args) => {
             let args = args.iter().map(render).collect::<Vec<_>>().join(", ");
             format!("{}({})", render(callee), args)
+        }
+        Expr::New(type_name, args) => {
+            let args = args.iter().map(render).collect::<Vec<_>>().join(", ");
+            match type_name {
+                Some(name) => format!("new {name}({args})"),
+                None => format!("new({args})"),
+            }
         }
         Expr::Unary(op, operand) => format!("{op}{}", render(operand)),
         Expr::PostfixUnary(op, operand) => format!("{}{op}", render(operand)),
@@ -174,23 +188,7 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
             }
             Some(Token::Symbol('(')) => {
                 c.next();
-                let mut args = Vec::new();
-                if !matches!(c.peek(), Some(Token::Symbol(')'))) {
-                    loop {
-                        args.push(parse_assignment(c)?);
-                        match c.peek() {
-                            Some(Token::Symbol(',')) => {
-                                c.next();
-                            }
-                            _ => break,
-                        }
-                    }
-                }
-                match c.next()? {
-                    Token::Symbol(')') => {}
-                    _ => return None,
-                }
-                expr = Expr::Call(Box::new(expr), args);
+                expr = Expr::Call(Box::new(expr), parse_arg_list(c)?);
             }
             _ => break,
         }
@@ -204,8 +202,44 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
     Some(expr)
 }
 
+/// Parses a parenthesized, comma-separated argument list: `(a, b,
+/// ...)`. The opening `(` must already be consumed by the caller.
+fn parse_arg_list(c: &mut Cursor) -> Option<Vec<Expr>> {
+    let mut args = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol(')'))) {
+        loop {
+            args.push(parse_assignment(c)?);
+            match c.peek() {
+                Some(Token::Symbol(',')) => {
+                    c.next();
+                }
+                _ => break,
+            }
+        }
+    }
+    match c.next()? {
+        Token::Symbol(')') => Some(args),
+        _ => None,
+    }
+}
+
 fn parse_primary(c: &mut Cursor) -> Option<Expr> {
     match c.next()? {
+        Token::Ident("new") => {
+            // `new(args)` (target-typed `new`) has no type name --
+            // distinguished from `new Type(args)` by whether a `(`
+            // immediately follows.
+            let type_name = if matches!(c.peek(), Some(Token::Symbol('('))) {
+                None
+            } else {
+                Some(super::statement::parse_type(c)?)
+            };
+            match c.next()? {
+                Token::Symbol('(') => {}
+                _ => return None,
+            }
+            Some(Expr::New(type_name, parse_arg_list(c)?))
+        }
         Token::Ident(s) => Some(Expr::Ident(s.to_string())),
         Token::Int(s) | Token::Float(s) | Token::Str(s) | Token::Char(s) => {
             Some(Expr::Literal(s.to_string()))
