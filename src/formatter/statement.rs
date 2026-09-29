@@ -308,6 +308,261 @@ fn try_format_while_statement(tokens: &[Token]) -> Option<String> {
     try_format_paren_condition("while", tokens)
 }
 
+/// Formats a `switch` statement's header: `switch (expression)`.
+/// `tokens` must not include a trailing `{`, if the source had one --
+/// the caller reattaches it.
+fn try_format_switch_statement(tokens: &[Token]) -> Option<String> {
+    try_format_paren_condition("switch", tokens)
+}
+
+/// Words that are contextual keywords in pattern position and so
+/// can't double as a type pattern's binding identifier -- e.g. `case
+/// int and > 0:` must keep `and` available to [`parse_and_pattern`]
+/// rather than letting the type pattern swallow it as a binding named
+/// `and`.
+const PATTERN_KEYWORDS: &[&str] = &["when", "and", "or", "not"];
+
+/// Parses a single relational/type/expression pattern -- the base
+/// case of the pattern grammar, with no `and`/`or`/`not`/`when`.
+/// Recognizes, in order:
+///
+///   - a **relational pattern** (`> 5`, `<= 0`): a bare relational
+///     operator followed by a constant expression;
+///   - a **type pattern** (`int i`, `List<int> items`): a type
+///     (reusing [`parse_type`]) immediately followed by a binding
+///     identifier (or `_` discard) -- tried with backtracking, since
+///     a leading identifier could just as easily start a plain
+///     expression pattern instead (`Color.Red`, `someConstant`);
+///   - otherwise, a plain **expression pattern** (literal, identifier,
+///     member access, or `_`).
+fn parse_primary_pattern(c: &mut Cursor) -> Option<String> {
+    let relational_op = match c.peek() {
+        Some(Token::Symbol(op @ ('<' | '>'))) => Some(op.to_string()),
+        Some(Token::Op(op @ ("<=" | ">="))) => Some(op.to_string()),
+        _ => None,
+    };
+
+    if let Some(op) = relational_op {
+        c.next();
+        return Some(format!("{op} {}", render(&parse_expression(c)?)));
+    }
+
+    let checkpoint = c.save();
+    let type_pattern = parse_type(c).and_then(|type_name| match c.peek() {
+        Some(Token::Ident(name)) if !PATTERN_KEYWORDS.contains(&name) => {
+            let name = name.to_string();
+            c.next();
+            Some(format!("{type_name} {name}"))
+        }
+        _ => None,
+    });
+
+    match type_pattern {
+        Some(pattern) => Some(pattern),
+        None => {
+            c.restore(checkpoint);
+            Some(render(&parse_expression(c)?))
+        }
+    }
+}
+
+/// Parses a `not` pattern (`not null`), or falls through to a
+/// primary pattern. Right-associative, so `not not p` parses as
+/// `not (not p)`.
+fn parse_not_pattern(c: &mut Cursor) -> Option<String> {
+    if matches!(c.peek(), Some(Token::Ident("not"))) {
+        c.next();
+        let operand = parse_not_pattern(c)?;
+        return Some(format!("not {operand}"));
+    }
+    parse_primary_pattern(c)
+}
+
+/// Parses `and`-combined patterns (`int i and > 0`); `and` binds
+/// tighter than `or`, matching C#'s pattern-combinator precedence.
+fn parse_and_pattern(c: &mut Cursor) -> Option<String> {
+    let mut left = parse_not_pattern(c)?;
+    while matches!(c.peek(), Some(Token::Ident("and"))) {
+        c.next();
+        let right = parse_not_pattern(c)?;
+        left = format!("{left} and {right}");
+    }
+    Some(left)
+}
+
+/// Parses `or`-combined patterns (`> 0 or < -10`), optionally
+/// followed by a `when` guard clause -- the full pattern grammar
+/// shared by `case` labels and `switch` expression arms.
+fn parse_switch_pattern(c: &mut Cursor) -> Option<String> {
+    let mut left = parse_and_pattern(c)?;
+    while matches!(c.peek(), Some(Token::Ident("or"))) {
+        c.next();
+        let right = parse_and_pattern(c)?;
+        left = format!("{left} or {right}");
+    }
+
+    if matches!(c.peek(), Some(Token::Ident("when"))) {
+        c.next();
+        let guard = parse_expression(c)?;
+        return Some(format!("{left} when {}", render(&guard)));
+    }
+
+    Some(left)
+}
+
+/// Formats a `case` label: `case pattern:`, where `pattern` may
+/// include a `when` guard (see [`parse_switch_pattern`]). `tokens`
+/// must not include the trailing `:`.
+fn try_format_case_label(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("case") {
+        return None;
+    }
+
+    let pattern = parse_switch_pattern(&mut c)?;
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(format!("case {pattern}:"))
+}
+
+/// Formats a bare `default:` label. `tokens` must not include the
+/// trailing `:`.
+fn try_format_default_label(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    if as_ident(c.next()?) != Some("default") {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some("default:".to_string())
+}
+
+/// Formats the header line of a declaration initialized by a
+/// `switch` expression: `type name = expr switch`. Only a single
+/// declarator is supported. The expression's arms (see
+/// [`try_format_switch_arm`]) and closing `};` live on their own
+/// lines and aren't parsed here. `tokens` must not include a trailing
+/// `{`, if the source had one -- the caller reattaches it.
+fn try_format_switch_expression_header(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    let type_name = parse_type(&mut c)?;
+    let name = as_ident(c.next()?)?.to_string();
+
+    if !matches!(c.next()?, Token::Symbol('=')) {
+        return None;
+    }
+
+    let scrutinee = parse_expression(&mut c)?;
+
+    if as_ident(c.next()?) != Some("switch") {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(format!(
+        "{type_name} {name} = {} switch",
+        render(&scrutinee)
+    ))
+}
+
+/// Formats one arm of a `switch` expression: `pattern => result`,
+/// where `pattern` may include a `when` guard (see
+/// [`parse_switch_pattern`]). `tokens` must not include the trailing
+/// `,`, if the source had one -- the caller reattaches it.
+fn try_format_switch_arm(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+    let arm = parse_switch_arm(&mut c)?;
+    if !c.at_end() {
+        return None;
+    }
+    Some(arm)
+}
+
+/// Parses one `switch` arm's `pattern => result` (see
+/// [`parse_switch_pattern`]), without requiring the cursor to be
+/// fully consumed afterward -- shared by [`try_format_switch_arm`]
+/// (one arm per line) and [`try_format_inline_switch_expression`]
+/// (all arms on one line).
+fn parse_switch_arm(c: &mut Cursor) -> Option<String> {
+    let pattern = parse_switch_pattern(c)?;
+    if !matches!(c.next()?, Token::Op("=>")) {
+        return None;
+    }
+    let result = parse_expression(c)?;
+    Some(format!("{pattern} => {}", render(&result)))
+}
+
+/// Formats a fully inline declaration whose initializer is a
+/// complete `switch` expression, all on one line: `type name = expr
+/// switch { pattern => result, ... };`. Only a single declarator is
+/// supported, and only in a declaration's initializer position --
+/// `return`/argument position and multi-line arm lists aren't
+/// recognized here (see [`try_format_switch_expression_header`] for
+/// the multi-line form). `tokens` must not include the trailing `;`.
+fn try_format_inline_switch_expression(tokens: &[Token]) -> Option<String> {
+    let mut c = Cursor::new(tokens);
+
+    let type_name = parse_type(&mut c)?;
+    let name = as_ident(c.next()?)?.to_string();
+
+    if !matches!(c.next()?, Token::Symbol('=')) {
+        return None;
+    }
+
+    let scrutinee = parse_expression(&mut c)?;
+
+    if as_ident(c.next()?) != Some("switch") {
+        return None;
+    }
+
+    if !matches!(c.next()?, Token::Symbol('{')) {
+        return None;
+    }
+
+    let mut arms = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol('}'))) {
+        loop {
+            arms.push(parse_switch_arm(&mut c)?);
+
+            match c.peek() {
+                Some(Token::Symbol(',')) => {
+                    c.next();
+                    if matches!(c.peek(), Some(Token::Symbol('}'))) {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
+    if !matches!(c.next()?, Token::Symbol('}')) {
+        return None;
+    }
+
+    if !c.at_end() {
+        return None;
+    }
+
+    Some(format!(
+        "{type_name} {name} = {} switch {{ {} }};",
+        render(&scrutinee),
+        arms.join(", ")
+    ))
+}
+
 /// Formats an `else` statement's header: `else` or `else if
 /// (condition)`. `tokens` must not include a trailing `{`, if the
 /// source had one -- the caller reattaches it.
@@ -512,9 +767,20 @@ pub fn format_statement_content(content: &str) -> Option<String> {
     if matches!(tokens.last(), Some(Token::Symbol(';'))) {
         let body = &tokens[..tokens.len() - 1];
         return try_format_declaration(body)
+            .or_else(|| try_format_inline_switch_expression(body))
             .or_else(|| try_format_do_while_tail(body))
             .or_else(|| try_format_do_while_close(body))
             .or_else(|| try_format_expression_statement(body));
+    }
+
+    if matches!(tokens.last(), Some(Token::Symbol(':'))) {
+        let body = &tokens[..tokens.len() - 1];
+        return try_format_case_label(body).or_else(|| try_format_default_label(body));
+    }
+
+    if matches!(tokens.last(), Some(Token::Symbol(','))) {
+        let body = &tokens[..tokens.len() - 1];
+        return try_format_switch_arm(body).map(|arm| format!("{arm},"));
     }
 
     if tokens.len() == 1 && matches!(tokens[0], Token::Symbol('{') | Token::Symbol('}')) {
@@ -533,7 +799,10 @@ pub fn format_statement_content(content: &str) -> Option<String> {
         .or_else(|| try_format_while_statement(sig_tokens))
         .or_else(|| try_format_do_statement(sig_tokens))
         .or_else(|| try_format_foreach_statement(sig_tokens))
-        .or_else(|| try_format_for_statement(sig_tokens))?;
+        .or_else(|| try_format_for_statement(sig_tokens))
+        .or_else(|| try_format_switch_statement(sig_tokens))
+        .or_else(|| try_format_switch_expression_header(sig_tokens))
+        .or_else(|| try_format_switch_arm(sig_tokens))?;
     Some(if trailing_brace {
         format!("{signature} {{")
     } else {

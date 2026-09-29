@@ -49,7 +49,16 @@ they're easy to pick up later instead of being rediscovered.
 - **`foreach` with tuple deconstruction** (`foreach (var (k, v) in
   dict)`) — the element position only accepts `type name`, not a
   tuple pattern.
-- **`switch` statements** — not implemented at all.
+- **Parenthesized sub-patterns** (`(int i and > 0) or < -10`) —
+  `parse_and_pattern`/`parse_or_pattern` chain flat left-to-right;
+  there's no `Paren`-equivalent pattern node, so grouping parentheses
+  around a sub-pattern aren't parsed.
+- **`switch` expressions outside a declaration's initializer** (`return
+  v switch { ... };`, `Foo(v switch { ... })`) — both the multi-line
+  form (`try_format_switch_expression_header`) and the single-line
+  form (`try_format_inline_switch_expression`) only recognize `type
+  name = expr switch ...`; a switch expression anywhere else is left
+  untouched.
 
 ## Formatting / layout
 

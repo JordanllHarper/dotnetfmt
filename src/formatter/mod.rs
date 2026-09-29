@@ -839,6 +839,278 @@ mod tests {
         assert_eq!(fmt(input), expected);
     }
 
+    // --- switch statements ------------------------------------------
+
+    #[test]
+    fn switch_statement_condition_is_formatted() {
+        assert_eq!(fmt("switch(x)"), "switch (x)");
+    }
+
+    #[test]
+    fn switch_statement_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("switch (x){"), "switch (x) {");
+    }
+
+    #[test]
+    fn case_label_is_formatted() {
+        assert_eq!(fmt("case   1:"), "case 1:");
+    }
+
+    #[test]
+    fn case_label_with_string_is_formatted() {
+        assert_eq!(fmt("case \"foo\":"), "case \"foo\":");
+    }
+
+    #[test]
+    fn case_label_with_member_access_is_formatted() {
+        assert_eq!(fmt("case Color.Red:"), "case Color.Red:");
+    }
+
+    #[test]
+    fn default_label_is_formatted() {
+        assert_eq!(fmt("default  :"), "default:");
+    }
+
+    #[test]
+    fn case_label_with_type_pattern_is_formatted() {
+        assert_eq!(fmt("case   int   i:"), "case int i:");
+    }
+
+    #[test]
+    fn case_label_with_generic_type_pattern_is_formatted() {
+        assert_eq!(fmt("case List<int>   items:"), "case List<int> items:");
+    }
+
+    #[test]
+    fn case_label_with_discard_type_pattern_is_formatted() {
+        assert_eq!(fmt("case int   _:"), "case int _:");
+    }
+
+    #[test]
+    fn case_label_with_relational_pattern_is_formatted() {
+        assert_eq!(fmt("case   >5:"), "case > 5:");
+        assert_eq!(fmt("case<=0:"), "case <= 0:");
+    }
+
+    #[test]
+    fn case_label_with_when_guard_is_formatted() {
+        assert_eq!(fmt("case int   i   when   i>0:"), "case int i when i > 0:");
+    }
+
+    #[test]
+    fn case_label_with_relational_pattern_and_when_guard_is_formatted() {
+        assert_eq!(fmt("case >0   when   sum<100:"), "case > 0 when sum < 100:");
+    }
+
+    #[test]
+    fn case_label_with_member_access_is_still_an_expression_pattern() {
+        // Regression check: `Color.Red` shouldn't be misparsed as a
+        // type pattern `Color` binding `Red`, since backtracking
+        // should reject it at the `.` and fall back to an expression.
+        assert_eq!(fmt("case   Color.Red:"), "case Color.Red:");
+    }
+
+    #[test]
+    fn case_label_with_and_pattern_is_formatted() {
+        assert_eq!(fmt("case int   i   and   >0:"), "case int i and > 0:");
+    }
+
+    #[test]
+    fn case_label_with_or_pattern_is_formatted() {
+        assert_eq!(fmt("case >0   or   <-10:"), "case > 0 or < -10:");
+    }
+
+    #[test]
+    fn case_label_with_not_pattern_is_formatted() {
+        assert_eq!(fmt("case   not   null:"), "case not null:");
+    }
+
+    #[test]
+    fn case_label_with_and_binds_tighter_than_or() {
+        // `and` should bind tighter than `or`, matching C#'s pattern
+        // precedence: `a or b and c` means `a or (b and c)`, not `(a
+        // or b) and c`. There's nothing for the renderer to
+        // parenthesize either way (patterns don't carry `Paren`
+        // nodes), so this just confirms parsing doesn't choke on the
+        // mixed combinator chain and preserves left-to-right order.
+        assert_eq!(
+            fmt("case >0   or   int   i   and   <100:"),
+            "case > 0 or int i and < 100:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_combinators_and_when_guard_is_formatted() {
+        assert_eq!(
+            fmt("case int   i   and   >0   when   i<100:"),
+            "case int i and > 0 when i < 100:"
+        );
+    }
+
+    #[test]
+    fn malformed_case_label_is_left_alone() {
+        assert_eq!(fmt("case 1 extra:"), "case 1 extra:");
+    }
+
+    #[test]
+    fn switch_statement_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "switch(x)\r\n",
+            "{\r\n",
+            "case   1:\r\n",
+            "DoOne();\r\n",
+            "break;\r\n",
+            "default:\r\n",
+            "DoDefault();\r\n",
+            "break;\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    switch (x)\r\n",
+            "    {\r\n",
+            "        case 1:\r\n",
+            "        DoOne();\r\n",
+            "        break;\r\n",
+            "        default:\r\n",
+            "        DoDefault();\r\n",
+            "        break;\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    // --- switch expressions -------------------------------------------
+
+    #[test]
+    fn switch_expression_header_is_formatted() {
+        assert_eq!(fmt("var result=value switch"), "var result = value switch");
+    }
+
+    #[test]
+    fn switch_expression_header_with_trailing_brace_is_formatted() {
+        assert_eq!(
+            fmt("var result=value switch{"),
+            "var result = value switch {"
+        );
+    }
+
+    #[test]
+    fn switch_expression_arm_is_formatted() {
+        assert_eq!(fmt("1=>\"one\","), "1 => \"one\",");
+    }
+
+    #[test]
+    fn switch_expression_discard_arm_without_comma_is_formatted() {
+        assert_eq!(fmt("_=>\"other\""), "_ => \"other\"");
+    }
+
+    #[test]
+    fn switch_expression_arm_with_type_pattern_is_formatted() {
+        assert_eq!(fmt("int   i=>\"int\","), "int i => \"int\",");
+    }
+
+    #[test]
+    fn switch_expression_arm_with_relational_pattern_is_formatted() {
+        assert_eq!(fmt(">0=>\"positive\","), "> 0 => \"positive\",");
+    }
+
+    #[test]
+    fn switch_expression_arm_with_when_guard_is_formatted() {
+        assert_eq!(
+            fmt("int   i   when   i>0=>\"positive int\","),
+            "int i when i > 0 => \"positive int\","
+        );
+    }
+
+    #[test]
+    fn switch_expression_arm_with_and_pattern_is_formatted() {
+        assert_eq!(
+            fmt("int   i   and   >0=>\"positive int\","),
+            "int i and > 0 => \"positive int\","
+        );
+    }
+
+    #[test]
+    fn switch_expression_arm_with_or_pattern_is_formatted() {
+        assert_eq!(
+            fmt(">0   or   <-10=>\"extreme\","),
+            "> 0 or < -10 => \"extreme\","
+        );
+    }
+
+    #[test]
+    fn switch_expression_arm_with_not_pattern_is_formatted() {
+        assert_eq!(fmt("not   null=>\"present\","), "not null => \"present\",");
+    }
+
+    #[test]
+    fn malformed_switch_expression_arm_is_left_alone() {
+        assert_eq!(fmt("1=>\"one\" extra,"), "1=>\"one\" extra,");
+    }
+
+    #[test]
+    fn switch_expression_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "var result=value switch\r\n",
+            "{\r\n",
+            "1=>\"one\",\r\n",
+            "2=>\"two\",\r\n",
+            "_=>\"other\",\r\n",
+            "};\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    var result = value switch\r\n",
+            "    {\r\n",
+            "        1 => \"one\",\r\n",
+            "        2 => \"two\",\r\n",
+            "        _ => \"other\",\r\n",
+            "    };\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    #[test]
+    fn inline_switch_expression_is_formatted() {
+        assert_eq!(
+            fmt("var label=value switch{1=>\"one\",_=>\"other\"};"),
+            "var label = value switch { 1 => \"one\", _ => \"other\" };"
+        );
+    }
+
+    #[test]
+    fn inline_switch_expression_with_trailing_comma_is_formatted() {
+        assert_eq!(
+            fmt("var label=value switch{1=>\"one\",_=>\"other\",};"),
+            "var label = value switch { 1 => \"one\", _ => \"other\" };"
+        );
+    }
+
+    #[test]
+    fn inline_switch_expression_with_pattern_combinators_is_formatted() {
+        assert_eq!(
+            fmt("var label=value switch{int   i   and   >0=>\"pos\",_=>\"other\"};"),
+            "var label = value switch { int i and > 0 => \"pos\", _ => \"other\" };"
+        );
+    }
+
+    #[test]
+    fn malformed_inline_switch_expression_is_left_alone() {
+        let input = "var label=value switch{1=>\"one\" extra};";
+        assert_eq!(fmt(input), input);
+    }
+
     #[test]
     fn full_method_body_is_reindented_and_reformatted() {
         let input = concat!(
