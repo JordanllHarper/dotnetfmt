@@ -53,7 +53,7 @@ pub fn tokenize(text: &str) -> Vec<Token<'_>> {
                 let end = scan_string(&mut chars, start, false);
                 tokens.push(Token::Str(&text[start..end]));
             }
-            '@' if matches!(peek_nth(&chars, 1), Some('"')) => {
+            '@' if matches!(peek_next(&mut chars), Some('"')) => {
                 chars.next();
                 let end = scan_string(&mut chars, start, true);
                 tokens.push(Token::Str(&text[start..end]));
@@ -105,10 +105,10 @@ pub fn tokenize(text: &str) -> Vec<Token<'_>> {
     tokens
 }
 
-fn peek_nth(chars: &Peekable<CharIndices<'_>>, n: usize) -> Option<char> {
+fn peek_next(chars: &mut Peekable<CharIndices<'_>>) -> Option<char> {
     // Cheap: `CharIndices` just wraps a pointer/length over `text`, so
     // cloning it doesn't allocate or copy the underlying string.
-    chars.clone().nth(n).map(|(_, c)| c)
+    chars.clone().nth(1).map(|e| e.1)
 }
 
 /// Consumes an integer/float literal (digits, a single fractional
@@ -117,8 +117,7 @@ fn peek_nth(chars: &Peekable<CharIndices<'_>>, n: usize) -> Option<char> {
 fn scan_number(chars: &mut Peekable<CharIndices<'_>>, start: usize) -> usize {
     let mut end = start;
     while let Some(&(_, c)) = chars.peek() {
-        let is_fraction_dot =
-            c == '.' && matches!(peek_nth(chars, 1), Some(d) if d.is_ascii_digit());
+        let is_fraction_dot = c == '.' && matches!(peek_next(chars), Some(d) if d.is_ascii_digit());
         if c.is_ascii_digit() || c == '_' || is_fraction_dot {
             end += c.len_utf8();
             chars.next();
@@ -127,29 +126,7 @@ fn scan_number(chars: &mut Peekable<CharIndices<'_>>, start: usize) -> usize {
         }
     }
 
-    if matches!(chars.peek(), Some(&(_, 'e' | 'E'))) {
-        let mut lookahead = chars.clone();
-        lookahead.next();
-        let mut has_sign = false;
-        if matches!(lookahead.peek(), Some((_, '+' | '-'))) {
-            has_sign = true;
-            lookahead.next();
-        }
-        if matches!(lookahead.peek(), Some((_, d)) if d.is_ascii_digit()) {
-            end += 1 + if has_sign { 1 } else { 0 };
-            chars.next();
-            if has_sign {
-                chars.next();
-            }
-            while let Some(&(_, d)) = chars.peek() {
-                if !d.is_ascii_digit() {
-                    break;
-                }
-                end += d.len_utf8();
-                chars.next();
-            }
-        }
-    }
+    end += scan_exponent(chars);
 
     while let Some(&(_, c)) = chars.peek() {
         if !c.is_ascii_alphabetic() {
@@ -160,6 +137,38 @@ fn scan_number(chars: &mut Peekable<CharIndices<'_>>, start: usize) -> usize {
     }
 
     end
+}
+
+/// Consumes an `e`/`E` exponent suffix (with an optional `+`/`-` sign and
+/// at least one digit) if one is present at the cursor, returning the
+/// number of bytes consumed. Leaves `chars` untouched and returns 0 if
+/// what follows isn't a valid exponent (e.g. `e` with no digit after it).
+fn scan_exponent(chars: &mut Peekable<CharIndices<'_>>) -> usize {
+    let mut lookahead = chars.clone();
+    if !matches!(lookahead.next(), Some((_, 'e' | 'E'))) {
+        return 0;
+    }
+
+    let mut len = 1;
+    if matches!(lookahead.peek(), Some((_, '+' | '-'))) {
+        len += 1;
+        lookahead.next();
+    }
+
+    if !matches!(lookahead.peek(), Some((_, d)) if d.is_ascii_digit()) {
+        return 0;
+    }
+
+    while let Some(&(_, d)) = lookahead.peek() {
+        if !d.is_ascii_digit() {
+            break;
+        }
+        len += d.len_utf8();
+        lookahead.next();
+    }
+
+    *chars = lookahead;
+    len
 }
 
 /// Consumes a `"..."` or verbatim `@"..."` string literal starting at
