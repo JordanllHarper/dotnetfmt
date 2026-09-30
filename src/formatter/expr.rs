@@ -2,13 +2,13 @@
 //! expressions, and a matching pretty-printer.
 //!
 //! Scope is intentionally limited to "basic" C#: literals, identifiers,
-//! member access, calls, `new Type(...)`/`new(...)` object creation,
-//! unary `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic,
-//! relational, equality, `&&`/`||`, and assignment (including compound
-//! assignment). Anything outside that (ternary, array creation/object
-//! initializers, indexers, lambdas, string interpolation, ...) simply
-//! fails to parse, and the caller falls back to leaving the source
-//! untouched.
+//! member access, calls, indexers, `new Type(...)`/`new(...)` object
+//! creation, unary `!`/`-`/`+`/prefix and postfix `++`/`--`,
+//! arithmetic, relational, equality, `&&`/`||`, and assignment
+//! (including compound assignment). Anything outside that (ternary,
+//! array creation/object initializers, lambdas, string interpolation,
+//! ...) simply fails to parse, and the caller falls back to leaving
+//! the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -28,6 +28,11 @@ pub enum Expr {
     Paren(Box<Expr>),
     Member(Box<Expr>, String),
     Call(Box<Expr>, Vec<Expr>),
+    /// An indexer access: `target[args]`. C# indexers can take
+    /// multiple comma-separated arguments (multi-dimensional
+    /// indexers, e.g. `matrix[i, j]`), so this mirrors `Call`'s
+    /// argument-list shape rather than holding a single index.
+    Index(Box<Expr>, Vec<Expr>),
     /// `new Type(args)`, or `new(args)` when the type is inferred
     /// from context (target-typed `new`). Array creation
     /// (`new int[5]`) and object/collection initializers (`new Foo {
@@ -50,6 +55,10 @@ pub fn render(expr: &Expr) -> String {
         Expr::Call(callee, args) => {
             let args = args.iter().map(render).collect::<Vec<_>>().join(", ");
             format!("{}({})", render(callee), args)
+        }
+        Expr::Index(target, args) => {
+            let args = args.iter().map(render).collect::<Vec<_>>().join(", ");
+            format!("{}[{}]", render(target), args)
         }
         Expr::New(type_name, args) => {
             let args = args.iter().map(render).collect::<Vec<_>>().join(", ");
@@ -188,7 +197,11 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
             }
             Some(Token::Symbol('(')) => {
                 c.next();
-                expr = Expr::Call(Box::new(expr), parse_arg_list(c)?);
+                expr = Expr::Call(Box::new(expr), parse_arg_list(c, ')')?);
+            }
+            Some(Token::Symbol('[')) => {
+                c.next();
+                expr = Expr::Index(Box::new(expr), parse_arg_list(c, ']')?);
             }
             _ => break,
         }
@@ -202,11 +215,12 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
     Some(expr)
 }
 
-/// Parses a parenthesized, comma-separated argument list: `(a, b,
-/// ...)`. The opening `(` must already be consumed by the caller.
-fn parse_arg_list(c: &mut Cursor) -> Option<Vec<Expr>> {
+/// Parses a comma-separated argument list delimited by `close` (`)`
+/// for calls/`new`, `]` for indexers). The opening delimiter must
+/// already be consumed by the caller.
+fn parse_arg_list(c: &mut Cursor, close: char) -> Option<Vec<Expr>> {
     let mut args = Vec::new();
-    if !matches!(c.peek(), Some(Token::Symbol(')'))) {
+    if !matches!(c.peek(), Some(Token::Symbol(s)) if s == close) {
         loop {
             args.push(parse_assignment(c)?);
             match c.peek() {
@@ -218,7 +232,7 @@ fn parse_arg_list(c: &mut Cursor) -> Option<Vec<Expr>> {
         }
     }
     match c.next()? {
-        Token::Symbol(')') => Some(args),
+        Token::Symbol(s) if s == close => Some(args),
         _ => None,
     }
 }
@@ -238,7 +252,7 @@ fn parse_primary(c: &mut Cursor) -> Option<Expr> {
                 Token::Symbol('(') => {}
                 _ => return None,
             }
-            Some(Expr::New(type_name, parse_arg_list(c)?))
+            Some(Expr::New(type_name, parse_arg_list(c, ')')?))
         }
         Token::Ident(s) => Some(Expr::Ident(s.to_string())),
         Token::Int(s) | Token::Float(s) | Token::Str(s) | Token::Char(s) => {

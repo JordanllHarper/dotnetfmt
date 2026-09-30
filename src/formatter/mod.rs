@@ -458,6 +458,48 @@ mod tests {
         assert_eq!(fmt("var x=new Foo{X=1};"), "var x=new Foo{X=1};");
     }
 
+    // --- indexers --------------------------------------------------------
+
+    #[test]
+    fn indexer_read_is_formatted() {
+        assert_eq!(fmt("var x=seen[0];"), "var x = seen[0];");
+    }
+
+    #[test]
+    fn indexer_with_string_key_is_formatted() {
+        assert_eq!(fmt("var x=map[\"key\"];"), "var x = map[\"key\"];");
+    }
+
+    #[test]
+    fn multi_dimensional_indexer_is_formatted() {
+        assert_eq!(fmt("var x=matrix[i,j];"), "var x = matrix[i, j];");
+    }
+
+    #[test]
+    fn chained_indexers_are_formatted() {
+        assert_eq!(fmt("var x=matrix[i][j];"), "var x = matrix[i][j];");
+    }
+
+    #[test]
+    fn indexer_combined_with_member_access_is_formatted() {
+        assert_eq!(fmt("var x=obj.Items[0];"), "var x = obj.Items[0];");
+        assert_eq!(
+            fmt("var x=seen[0].ToString();"),
+            "var x = seen[0].ToString();"
+        );
+    }
+
+    #[test]
+    fn indexer_assignment_is_formatted() {
+        assert_eq!(fmt("seen[0]=5;"), "seen[0] = 5;");
+        assert_eq!(fmt("seen[0]+=1;"), "seen[0] += 1;");
+    }
+
+    #[test]
+    fn indexer_as_call_argument_is_formatted() {
+        assert_eq!(fmt("Foo(seen[ 0 ]);"), "Foo(seen[0]);");
+    }
+
     // --- method / function declarations ------------------------------------
 
     #[test]

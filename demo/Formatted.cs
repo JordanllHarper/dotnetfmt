@@ -31,7 +31,7 @@ public static class Program
 				var ok = sum != 0 && sum < 100;
 				for (int i = 0; i < seen.Count; i++)
 				{
-						Console.WriteLine(i);
+						Console.WriteLine(seen[i]);
 				}
 				switch (sum)
 				{
