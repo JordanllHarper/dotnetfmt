@@ -208,7 +208,7 @@ fn scan_char(chars: &mut Peekable<CharIndices<'_>>, start: usize) -> usize {
     let mut end = start + 1;
 
     loop {
-        match chars.peek().copied() {
+        match chars.peek() {
             None => break,
             Some((_, '\'')) => {
                 chars.next();
@@ -223,6 +223,7 @@ fn scan_char(chars: &mut Peekable<CharIndices<'_>>, start: usize) -> usize {
                 }
             }
             Some((_, c)) => {
+                let c = *c;
                 chars.next();
                 end += c.len_utf8();
             }
