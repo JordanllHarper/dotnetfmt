@@ -90,7 +90,7 @@ pub fn tokenize(text: &str) -> Vec<Token<'_>> {
                     .iter()
                     .find(|op| text[start..].starts_with(*op))
                 {
-                    for _ in 0..op.chars().count() {
+                    for _ in 0..op.len() {
                         chars.next();
                     }
                     tokens.push(Token::Op(op));
