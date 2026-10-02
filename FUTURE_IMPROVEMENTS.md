@@ -14,10 +14,14 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Object creation
 
-- **Array creation / initializers** (`new int[5]`, `new[] {1, 2, 3}`,
-  collection/object initializers `{ ... }`) — `expr.rs`'s `new` case
-  only recognizes `new Type(args)`/`new(args)` constructor-style
-  invocation, not the `[...]`/`{...}` forms.
+- **Multi-dimensional array creation with explicit sizes** (`new
+  int[2, 3]`) — only a single bracketed size expression is parsed
+  (`new Type[size]`); the no-size forms (`new Type[,] { .. }`) support
+  any rank via a nested `{ .. }` initializer instead.
+- **Object/collection initializers** (`new Foo { X = 1 }`, `new Foo()
+  { X = 1 }`) — `expr.rs`'s `new` case only recognizes array creation
+  brackets before a `{ .. }` initializer, not a bare type name or a
+  constructor argument list.
 
 ## Types & declarations
 

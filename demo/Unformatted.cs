@@ -27,6 +27,7 @@ public static class Program
 				} while (sum > 0);
 				List<int> seen = new List<int>();
 				seen[0]=sum;
+				int[] primes=new int[]{2,3,5,7};
 				foreach (int n in seen)
 				{
 						Console.WriteLine(n);

@@ -3,12 +3,14 @@
 //!
 //! Scope is intentionally limited to "basic" C#: literals, identifiers,
 //! member access, calls, indexers, `new Type(...)`/`new(...)` object
-//! creation, unary `!`/`-`/`+`/prefix and postfix `++`/`--`,
-//! arithmetic, relational, equality, `&&`/`||`, assignment (including
-//! compound assignment), and the `?:` conditional (ternary) operator.
-//! Anything outside that (array creation/object initializers, lambdas,
-//! string interpolation, ...) simply fails to parse, and the caller
-//! falls back to leaving the source untouched.
+//! creation, array creation (`new Type[size]`, `new Type[] { .. }`,
+//! `new[] { .. }`, and bare `{ .. }` initializers), unary
+//! `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic, relational,
+//! equality, `&&`/`||`, assignment (including compound assignment),
+//! and the `?:` conditional (ternary) operator. Anything outside that
+//! (object/collection initializers, lambdas, string interpolation,
+//! ...) simply fails to parse, and the caller falls back to leaving
+//! the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -34,10 +36,23 @@ pub enum Expr {
     /// argument-list shape rather than holding a single index.
     Index(Box<Expr>, Vec<Expr>),
     /// `new Type(args)`, or `new(args)` when the type is inferred
-    /// from context (target-typed `new`). Array creation
-    /// (`new int[5]`) and object/collection initializers (`new Foo {
-    /// ... }`) aren't represented -- see [`parse_primary`].
+    /// from context (target-typed `new`). Object/collection
+    /// initializers (`new Foo { X = 1 }`) aren't represented -- see
+    /// [`parse_primary`].
     New(Option<String>, Vec<Expr>),
+    /// Array creation: `new Type[size]`, `new Type[] { ... }`, or
+    /// `new[] { ... }`. `type_name` already includes any `[]`/`[,]`
+    /// rank that `parse_type` folds into the type itself (the
+    /// no-size forms); it's `None` only for the implicitly-typed
+    /// `new[]` form. `size` holds the bracketed size expression for
+    /// the `new Type[size]` form. `elements` holds a trailing
+    /// `{ ... }` initializer's items when one is present.
+    ArrayCreation(Option<String>, Option<Box<Expr>>, Option<Vec<Expr>>),
+    /// A bare `{ ... }` initializer list -- valid directly in a
+    /// declarator initializer (`int[] arr = { 1, 2, 3 };`), and
+    /// nested inside another initializer for jagged/multi-dimensional
+    /// arrays (`new int[,] { { 1, 2 }, { 3, 4 } }`).
+    ArrayInitializer(Vec<Expr>),
     Unary(&'static str, Box<Expr>),
     /// Postfix `++`/`--`, e.g. `i++`. Kept distinct from `Unary`
     /// (prefix) since the operator renders after the operand and, per
@@ -69,6 +84,29 @@ pub fn render(expr: &Expr) -> String {
                 None => format!("new({args})"),
             }
         }
+        Expr::ArrayCreation(type_name, size, elements) => {
+            let type_part = if let Some(name) = type_name {
+                format!(" {name}")
+            } else {
+                String::new()
+            };
+            // `type_name` already includes the brackets for the
+            // no-size forms (`new int[] { .. }`, `new int[,] { .. }`)
+            // -- only the sized and implicitly-typed (`new[]`) forms
+            // need brackets rendered here.
+            let brackets = if size.is_some() || type_name.is_none() {
+                format!("[{}]", size.as_deref().map(render).unwrap_or_default())
+            } else {
+                String::new()
+            };
+            let init_part = if let Some(elements) = elements {
+                format!(" {}", render_initializer(elements))
+            } else {
+                String::new()
+            };
+            format!("new{type_part}{brackets}{init_part}")
+        }
+        Expr::ArrayInitializer(elements) => render_initializer(elements),
         Expr::Unary(op, operand) => format!("{op}{}", render(operand)),
         Expr::PostfixUnary(op, operand) => format!("{}{op}", render(operand)),
         Expr::Binary(op, left, right) => format!("{} {op} {}", render(left), render(right)),
@@ -77,6 +115,14 @@ pub fn render(expr: &Expr) -> String {
             format!("{} ? {} : {}", render(cond), render(when_true), render(when_false))
         }
     }
+}
+
+fn render_initializer(elements: &[Expr]) -> String {
+    if elements.is_empty() {
+        return "{ }".to_string();
+    }
+    let elements = elements.iter().map(render).collect::<Vec<_>>().join(", ");
+    format!("{{ {elements} }}")
 }
 
 /// Parses a full expression, starting at the lowest precedence level
@@ -262,21 +308,7 @@ fn parse_arg_list(c: &mut Cursor, close: char) -> Option<Vec<Expr>> {
 
 fn parse_primary(c: &mut Cursor) -> Option<Expr> {
     match c.next()? {
-        Token::Ident("new") => {
-            // `new(args)` (target-typed `new`) has no type name --
-            // distinguished from `new Type(args)` by whether a `(`
-            // immediately follows.
-            let type_name = if matches!(c.peek(), Some(Token::Symbol('('))) {
-                None
-            } else {
-                Some(super::statement::parse_type(c)?)
-            };
-            match c.next()? {
-                Token::Symbol('(') => {}
-                _ => return None,
-            }
-            Some(Expr::New(type_name, parse_arg_list(c, ')')?))
-        }
+        Token::Ident("new") => parse_new(c),
         Token::Ident(s) => Some(Expr::Ident(s.to_string())),
         Token::Int(s) | Token::Float(s) | Token::Str(s) | Token::Char(s) => {
             Some(Expr::Literal(s.to_string()))
@@ -288,6 +320,79 @@ fn parse_primary(c: &mut Cursor) -> Option<Expr> {
                 _ => None,
             }
         }
+        Token::Symbol('{') => Some(Expr::ArrayInitializer(parse_arg_list(c, '}')?)),
         _ => None,
     }
+}
+
+/// Parses the `new` keyword's forms: target-typed `new(args)`, `new
+/// Type(args)` object creation, and array creation (`new Type[size]`,
+/// `new Type[] { .. }` / `new Type[,] { .. }`, or implicitly-typed
+/// `new[] { .. }`). `new Foo { X = 1 }` object/collection initializers
+/// aren't supported -- that falls through to `None` below, since a
+/// bare `Type` isn't distinguishable from an array's element type
+/// until brackets show up.
+fn parse_new(c: &mut Cursor) -> Option<Expr> {
+    if matches!(c.peek(), Some(Token::Symbol('['))) {
+        return parse_implicit_array_creation(c);
+    }
+
+    // `new(args)` (target-typed `new`) has no type name -- distinguished
+    // from `new Type(args)` by whether a `(` immediately follows.
+    if matches!(c.peek(), Some(Token::Symbol('('))) {
+        c.next();
+        return Some(Expr::New(None, parse_arg_list(c, ')')?));
+    }
+
+    let type_name = super::statement::parse_type(c)?;
+    match c.peek() {
+        Some(Token::Symbol('(')) => {
+            c.next();
+            Some(Expr::New(Some(type_name), parse_arg_list(c, ')')?))
+        }
+        Some(Token::Symbol('[')) => parse_sized_array_creation(c, type_name),
+        // `new Type[] { .. }` / `new Type[,] { .. }` -- the empty rank
+        // brackets were already folded into `type_name` by
+        // `parse_type`. A plain `new Foo { .. }` object initializer
+        // (no brackets) falls through to `_ => None` instead.
+        Some(Token::Symbol('{')) if type_name.ends_with(']') => {
+            Some(Expr::ArrayCreation(Some(type_name), None, Some(parse_array_initializer(c)?)))
+        }
+        _ => None,
+    }
+}
+
+/// `new[] { .. }` -- implicitly-typed array creation; the brackets
+/// are always empty since the element type (and so the array's rank)
+/// is inferred from the initializer.
+fn parse_implicit_array_creation(c: &mut Cursor) -> Option<Expr> {
+    c.next(); // '['
+    if !matches!(c.next()?, Token::Symbol(']')) {
+        return None;
+    }
+    Some(Expr::ArrayCreation(None, None, Some(parse_array_initializer(c)?)))
+}
+
+/// `new Type[size]`, with an optional `{ .. }` initializer.
+fn parse_sized_array_creation(c: &mut Cursor, type_name: String) -> Option<Expr> {
+    c.next(); // '['
+    let size = Box::new(parse_expression(c)?);
+    if !matches!(c.next()?, Token::Symbol(']')) {
+        return None;
+    }
+    let elements = if matches!(c.peek(), Some(Token::Symbol('{'))) {
+        Some(parse_array_initializer(c)?)
+    } else {
+        None
+    };
+    Some(Expr::ArrayCreation(Some(type_name), Some(size), elements))
+}
+
+/// Parses a `{ .. }` initializer list, with the opening `{` not yet
+/// consumed.
+fn parse_array_initializer(c: &mut Cursor) -> Option<Vec<Expr>> {
+    if !matches!(c.next()?, Token::Symbol('{')) {
+        return None;
+    }
+    parse_arg_list(c, '}')
 }

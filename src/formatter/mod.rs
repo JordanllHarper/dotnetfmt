@@ -455,10 +455,47 @@ mod tests {
     }
 
     #[test]
-    fn array_creation_is_not_recognized() {
-        // Array creation isn't in the parsed grammar -- only `new
-        // Type(...)`/`new(...)` object creation is.
-        assert_eq!(fmt("var x=new int[5];"), "var x=new int[5];");
+    fn sized_array_creation_is_formatted() {
+        assert_eq!(fmt("var x=new   int[5];"), "var x = new int[5];");
+    }
+
+    #[test]
+    fn sized_array_creation_with_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new int[5]{1,2,3,4,5};"),
+            "var x = new int[5] { 1, 2, 3, 4, 5 };"
+        );
+    }
+
+    #[test]
+    fn array_creation_with_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new int[]{1,2,3};"),
+            "var x = new int[] { 1, 2, 3 };"
+        );
+    }
+
+    #[test]
+    fn implicitly_typed_array_creation_is_formatted() {
+        assert_eq!(fmt("var x=new[]{1,2,3};"), "var x = new[] { 1, 2, 3 };");
+    }
+
+    #[test]
+    fn empty_array_initializer_is_formatted() {
+        assert_eq!(fmt("var x=new int[]{};"), "var x = new int[] { };");
+    }
+
+    #[test]
+    fn bare_array_initializer_in_declarator_is_formatted() {
+        assert_eq!(fmt("int[]   arr={1,2,3};"), "int[] arr = { 1, 2, 3 };");
+    }
+
+    #[test]
+    fn nested_array_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new int[,]{{1,2},{3,4}};"),
+            "var x = new int[,] { { 1, 2 }, { 3, 4 } };"
+        );
     }
 
     #[test]
