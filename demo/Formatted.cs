@@ -3,6 +3,8 @@ public static class Program
 		public static int Add(int a, int b)
 		{
 				int sum = a + b;
+				var scaled = (a + b) * 2;
+				var negated = -sum;
 				if (sum > 0)
 				{
 						Console.WriteLine("positive: " + sum);
@@ -24,11 +26,14 @@ public static class Program
 						sum -= 1;
 				} while (sum > 0);
 				List<int> seen = new List<int>();
+				seen[0] = sum;
 				foreach (int n in seen)
 				{
 						Console.WriteLine(n);
 				}
 				var ok = sum != 0 && sum < 100;
+				var notOk = !ok;
+				var isZero = sum == 0;
 				for (int i = 0; i < seen.Count; i++)
 				{
 						Console.WriteLine(seen[i]);
@@ -56,6 +61,7 @@ public static class Program
 						_ => "some",
 				};
 				var tag = sum switch { 0 => "none", > 0 and < 100 => "small", _ => "other" };
+				var tag2 = sum > 0 ? "pos" : "neg";
 				sum += 1;
 				return sum;
 		}

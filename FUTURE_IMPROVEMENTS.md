@@ -6,7 +6,6 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Expressions
 
-- **Ternary conditional** (`cond ? a : b`) — not in the parsed grammar.
 - **Bitwise/shift operators** (`&`, `|`, `^`, `<<`, `>>`) and **null
   coalescing** (`??`) — not in the expression grammar.
 - **String interpolation** (`$"{x}"`) — tokenizes as a bare `$` symbol

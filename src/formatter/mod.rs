@@ -337,6 +337,16 @@ mod tests {
         assert_eq!(fmt("x=5;"), "x = 5;");
     }
 
+    #[test]
+    fn ternary_expression_is_formatted() {
+        assert_eq!(fmt("var x=a?b:c;"), "var x = a ? b : c;");
+    }
+
+    #[test]
+    fn nested_ternary_expression_is_right_associative() {
+        assert_eq!(fmt("var x=a?b:c?d:e;"), "var x = a ? b : c ? d : e;");
+    }
+
     // --- literals / data types --------------------------------------------
 
     #[test]

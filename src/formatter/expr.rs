@@ -4,11 +4,11 @@
 //! Scope is intentionally limited to "basic" C#: literals, identifiers,
 //! member access, calls, indexers, `new Type(...)`/`new(...)` object
 //! creation, unary `!`/`-`/`+`/prefix and postfix `++`/`--`,
-//! arithmetic, relational, equality, `&&`/`||`, and assignment
-//! (including compound assignment). Anything outside that (ternary,
-//! array creation/object initializers, lambdas, string interpolation,
-//! ...) simply fails to parse, and the caller falls back to leaving
-//! the source untouched.
+//! arithmetic, relational, equality, `&&`/`||`, assignment (including
+//! compound assignment), and the `?:` conditional (ternary) operator.
+//! Anything outside that (array creation/object initializers, lambdas,
+//! string interpolation, ...) simply fails to parse, and the caller
+//! falls back to leaving the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -45,6 +45,8 @@ pub enum Expr {
     PostfixUnary(&'static str, Box<Expr>),
     Binary(&'static str, Box<Expr>, Box<Expr>),
     Assign(&'static str, Box<Expr>, Box<Expr>),
+    /// `cond ? when_true : when_false`.
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 pub fn render(expr: &Expr) -> String {
@@ -71,6 +73,9 @@ pub fn render(expr: &Expr) -> String {
         Expr::PostfixUnary(op, operand) => format!("{}{op}", render(operand)),
         Expr::Binary(op, left, right) => format!("{} {op} {}", render(left), render(right)),
         Expr::Assign(op, left, right) => format!("{} {op} {}", render(left), render(right)),
+        Expr::Ternary(cond, when_true, when_false) => {
+            format!("{} ? {} : {}", render(cond), render(when_true), render(when_false))
+        }
     }
 }
 
@@ -81,7 +86,7 @@ pub fn parse_expression(c: &mut Cursor) -> Option<Expr> {
 }
 
 fn parse_assignment(c: &mut Cursor) -> Option<Expr> {
-    let left = parse_logical_or(c)?;
+    let left = parse_ternary(c)?;
 
     let op = match c.peek() {
         Some(Token::Symbol('=')) => "=",
@@ -91,6 +96,24 @@ fn parse_assignment(c: &mut Cursor) -> Option<Expr> {
     c.next();
     let right = parse_assignment(c)?; // right-associative
     Some(Expr::Assign(op, Box::new(left), Box::new(right)))
+}
+
+/// `cond ? when_true : when_false`, right-associative (so `a ? b : c ? d
+/// : e` parses as `a ? b : (c ? d : e)`). The branches are parsed at
+/// assignment precedence so both nested ternaries and assignments
+/// (`a ? b : c = d`) are allowed inside them, matching C#'s grammar.
+fn parse_ternary(c: &mut Cursor) -> Option<Expr> {
+    let cond = parse_logical_or(c)?;
+    if !matches!(c.peek(), Some(Token::Symbol('?'))) {
+        return Some(cond);
+    }
+    c.next();
+    let when_true = parse_assignment(c)?;
+    if !matches!(c.next()?, Token::Symbol(':')) {
+        return None;
+    }
+    let when_false = parse_assignment(c)?;
+    Some(Expr::Ternary(Box::new(cond), Box::new(when_true), Box::new(when_false)))
 }
 
 fn parse_logical_or(c: &mut Cursor) -> Option<Expr> {
