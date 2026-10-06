@@ -113,7 +113,6 @@ impl std::error::Error for EditorConfigError {}
 /// Reads `.editorconfig` from `dir` and resolves the properties this
 /// formatter needs.
 pub fn read(dir: &Path) -> Result<EditorConfig, EditorConfigError> {
-    // TODO: do we need to check path for .editorconfig already?
     let path = dir.join(".editorconfig");
     if !path.is_file() {
         return Err(EditorConfigError::NotFound(path));
