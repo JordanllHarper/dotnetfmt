@@ -8,6 +8,7 @@
 //!   dotnet_fmt workspace [--workspace <path>]
 //!       Format every C# file under a workspace directory. When
 //!       `--workspace` is omitted, the current directory is used.
+//!       Note: Currently NOT implemented
 
 use std::path::PathBuf;
 
