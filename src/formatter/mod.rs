@@ -1292,10 +1292,9 @@ mod tests {
     fn case_label_with_and_binds_tighter_than_or() {
         // `and` should bind tighter than `or`, matching C#'s pattern
         // precedence: `a or b and c` means `a or (b and c)`, not `(a
-        // or b) and c`. There's nothing for the renderer to
-        // parenthesize either way (patterns don't carry `Paren`
-        // nodes), so this just confirms parsing doesn't choke on the
-        // mixed combinator chain and preserves left-to-right order.
+        // or b) and c`. The input has no explicit grouping, so this
+        // just confirms parsing doesn't choke on the mixed combinator
+        // chain and preserves left-to-right order.
         assert_eq!(
             fmt("case >0   or   int   i   and   <100:"),
             "case > 0 or int i and < 100:"
@@ -1311,8 +1310,30 @@ mod tests {
     }
 
     #[test]
+    fn case_label_with_parenthesized_sub_pattern_is_formatted() {
+        assert_eq!(
+            fmt("case (int   i   and   >0)   or   <-10:"),
+            "case (int i and > 0) or < -10:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_parenthesized_sub_pattern_and_when_guard_is_formatted() {
+        assert_eq!(
+            fmt("case (int i and >0) or <-10 when flag:"),
+            "case (int i and > 0) or < -10 when flag:"
+        );
+    }
+
+    #[test]
     fn malformed_case_label_is_left_alone() {
         assert_eq!(fmt("case 1 extra:"), "case 1 extra:");
+    }
+
+    #[test]
+    fn malformed_parenthesized_sub_pattern_is_left_alone() {
+        let line = "case (int i and >0 or <-10:";
+        assert_eq!(fmt(line), line);
     }
 
     #[test]
@@ -1472,6 +1493,81 @@ mod tests {
     fn malformed_inline_switch_expression_is_left_alone() {
         let input = "var label=value switch{1=>\"one\" extra};";
         assert_eq!(fmt(input), input);
+    }
+
+    #[test]
+    fn switch_expression_as_call_argument_is_formatted() {
+        // A switch expression is now part of the general expression
+        // grammar, so it composes anywhere an expression can appear --
+        // not just a declaration's initializer.
+        assert_eq!(
+            fmt("Foo(value   switch{1=>\"one\",_=>\"other\"});"),
+            "Foo(value switch { 1 => \"one\", _ => \"other\" });"
+        );
+    }
+
+    #[test]
+    fn switch_expression_in_return_statement_is_formatted() {
+        assert_eq!(
+            fmt("return value switch{1=>\"one\",_=>\"other\"};"),
+            "return value switch { 1 => \"one\", _ => \"other\" };"
+        );
+    }
+
+    #[test]
+    fn switch_expression_header_in_return_statement_is_formatted() {
+        assert_eq!(fmt("return value   switch"), "return value switch");
+    }
+
+    #[test]
+    fn multi_line_switch_expression_in_return_statement_is_reindented_and_reformatted() {
+        let input = concat!(
+            "string Foo()\r\n",
+            "{\r\n",
+            "return value switch\r\n",
+            "{\r\n",
+            "1 => \"one\",\r\n",
+            "_ => \"other\",\r\n",
+            "};\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "string Foo()\r\n",
+            "{\r\n",
+            "    return value switch\r\n",
+            "    {\r\n",
+            "        1 => \"one\",\r\n",
+            "        _ => \"other\",\r\n",
+            "    };\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    // --- return statements ----------------------------------------------
+
+    #[test]
+    fn bare_return_statement_is_formatted() {
+        assert_eq!(fmt("return   ;"), "return;");
+    }
+
+    #[test]
+    fn return_statement_with_expression_is_formatted() {
+        assert_eq!(fmt("return   x+1;"), "return x + 1;");
+    }
+
+    #[test]
+    fn return_statement_with_call_is_formatted() {
+        assert_eq!(
+            fmt("return someFunction(a,b);"),
+            "return someFunction(a, b);"
+        );
+    }
+
+    #[test]
+    fn malformed_return_statement_is_left_alone() {
+        let line = "return x + ;";
+        assert_eq!(fmt(line), line);
     }
 
     #[test]
