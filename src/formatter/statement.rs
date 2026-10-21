@@ -3,7 +3,7 @@
 //! expression parser in [`super::expr`].
 
 use crate::formatter::expr::{parse_expression, parse_switch_arm, parse_switch_pattern, render};
-use crate::formatter::token::{Cursor, Token, as_ident, tokenize};
+use crate::formatter::token::{Cursor, Token, as_ident, render_tokens, tokenize};
 
 /// Modifiers recognized ahead of a method's return type. Not
 /// exhaustive -- just the common ones a "basic" formatter should not
@@ -819,6 +819,98 @@ fn try_format_for_statement(tokens: &[Token]) -> Option<String> {
     let increment = format_for_increment(increment_tokens)?;
 
     Some(format!("for ({init}; {condition}; {increment})"))
+}
+
+/// Splits a brace's body (the tokens strictly between a matching `{`
+/// and `}`, both already excluded) into its top-level statements, each
+/// including its own trailing `;`. `;` can't appear nested inside an
+/// expression or type, only inside a parenthesized/bracketed
+/// construct (e.g. a `for` header), so tracking paren/bracket depth
+/// -- not brace depth, since the body is already known to be
+/// brace-free by the caller -- is enough to find the real separators.
+fn split_top_level_statements<'a, 'b>(tokens: &'b [Token<'a>]) -> Vec<&'b [Token<'a>]> {
+    let mut statements = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Symbol('(') | Token::Symbol('[') => depth += 1,
+            Token::Symbol(')') | Token::Symbol(']') => depth -= 1,
+            Token::Symbol(';') if depth == 0 => {
+                statements.push(&tokens[start..=i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < tokens.len() {
+        statements.push(&tokens[start..]);
+    }
+    statements
+}
+
+/// Splits a single source line that both closes and opens a brace --
+/// the two shapes `FUTURE_IMPROVEMENTS.md` calls out under "Multiple
+/// braces per source line" -- into the separate logical lines the
+/// one-statement-per-line model expects:
+///
+/// - a combined close-then-open, e.g. `} else {` -> `}`, `else`, `{`
+///   (matching the canonical multi-line form already produced when a
+///   source file spells these as three lines to begin with);
+/// - a single-line block body, e.g. `if (x) { y(); }` -> `if (x) {`,
+///   `y();`, `}` (the header and its brace stay combined, since
+///   that's the form the source already chose -- see
+///   `method_signature_with_trailing_brace_is_formatted` and friends,
+///   which likewise never split an already-combined header+brace).
+///
+/// Returns `None` -- leaving the whole original line untouched, same
+/// as any other unrecognized construct -- when the line doesn't match
+/// either shape, or when any resulting segment doesn't itself format
+/// cleanly (e.g. a nested brace in the body, or a construct this
+/// formatter doesn't otherwise recognize).
+pub(super) fn split_brace_segments(trimmed: &str) -> Option<Vec<String>> {
+    let tokens = tokenize(trimmed);
+    if tokens.len() < 3 {
+        return None;
+    }
+
+    if matches!(tokens.first(), Some(Token::Symbol('}')))
+        && matches!(tokens.last(), Some(Token::Symbol('{')))
+    {
+        let middle = render_tokens(&tokens[1..tokens.len() - 1]);
+        let formatted_middle = format_statement_content(&middle)?;
+        return Some(vec!["}".to_string(), formatted_middle, "{".to_string()]);
+    }
+
+    if !matches!(tokens.last(), Some(Token::Symbol('}'))) {
+        return None;
+    }
+    let open_pos = tokens.iter().position(|t| matches!(t, Token::Symbol('{')))?;
+    let body = &tokens[open_pos + 1..tokens.len() - 1];
+    if body
+        .iter()
+        .any(|t| matches!(t, Token::Symbol('{') | Token::Symbol('}')))
+    {
+        return None;
+    }
+    if open_pos == 0 && body.is_empty() {
+        // A bare `{}`/`{ }` isn't this shape -- nothing to pull out.
+        return None;
+    }
+
+    let header = &tokens[..open_pos];
+    let header_line = if header.is_empty() {
+        "{".to_string()
+    } else {
+        format_statement_content(&format!("{} {{", render_tokens(header)))?
+    };
+
+    let mut lines = vec![header_line];
+    for statement_tokens in split_top_level_statements(body) {
+        lines.push(format_statement_content(&render_tokens(statement_tokens))?);
+    }
+    lines.push("}".to_string());
+    Some(lines)
 }
 
 /// Formats a single logical line of statement content (already
