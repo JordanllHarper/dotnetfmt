@@ -618,6 +618,39 @@ mod tests {
         assert_eq!(fmt("void Foo(int x=5)"), "void Foo(int x = 5)");
     }
 
+    #[test]
+    fn constructor_with_no_return_type_is_formatted() {
+        assert_eq!(fmt("public   Foo(int   x)"), "public Foo(int x)");
+    }
+
+    #[test]
+    fn no_arg_constructor_with_trailing_brace_is_formatted() {
+        assert_eq!(fmt("public Foo(){"), "public Foo() {");
+    }
+
+    #[test]
+    fn generic_method_type_parameter_list_is_formatted() {
+        assert_eq!(fmt("T   Foo<T>(T   x)"), "T Foo<T>(T x)");
+    }
+
+    #[test]
+    fn generic_method_with_multiple_type_parameters_is_formatted() {
+        assert_eq!(
+            fmt("public static TResult Map<TInput,TResult>(TInput x)"),
+            "public static TResult Map<TInput, TResult>(TInput x)"
+        );
+    }
+
+    #[test]
+    fn generic_method_type_parameter_constraint_is_not_recognized() {
+        // The `where` clause after the parameter list isn't part of
+        // the grammar yet; the leftover tokens mean the whole
+        // signature is left untouched rather than dropping the
+        // constraint.
+        let line = "T Foo<T>(T x) where T : class";
+        assert_eq!(fmt(line), line);
+    }
+
     // --- class declarations ------------------------------------------
 
     #[test]
