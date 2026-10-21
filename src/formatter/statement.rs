@@ -2,7 +2,7 @@
 //! signatures, both built on top of the type parser and the
 //! expression parser in [`super::expr`].
 
-use crate::formatter::expr::{parse_expression, render};
+use crate::formatter::expr::{parse_expression, parse_switch_arm, parse_switch_pattern, render};
 use crate::formatter::token::{Cursor, Token, as_ident, tokenize};
 
 /// Modifiers recognized ahead of a method's return type. Not
@@ -369,101 +369,6 @@ fn try_format_switch_statement(tokens: &[Token]) -> Option<String> {
     try_format_paren_condition("switch", tokens)
 }
 
-/// Words that are contextual keywords in pattern position and so
-/// can't double as a type pattern's binding identifier -- e.g. `case
-/// int and > 0:` must keep `and` available to [`parse_and_pattern`]
-/// rather than letting the type pattern swallow it as a binding named
-/// `and`.
-const PATTERN_KEYWORDS: &[&str] = &["when", "and", "or", "not"];
-
-/// Parses a single relational/type/expression pattern -- the base
-/// case of the pattern grammar, with no `and`/`or`/`not`/`when`.
-/// Recognizes, in order:
-///
-///   - a **relational pattern** (`> 5`, `<= 0`): a bare relational
-///     operator followed by a constant expression;
-///   - a **type pattern** (`int i`, `List<int> items`): a type
-///     (reusing [`parse_type`]) immediately followed by a binding
-///     identifier (or `_` discard) -- tried with backtracking, since
-///     a leading identifier could just as easily start a plain
-///     expression pattern instead (`Color.Red`, `someConstant`);
-///   - otherwise, a plain **expression pattern** (literal, identifier,
-///     member access, or `_`).
-fn parse_primary_pattern(c: &mut Cursor) -> Option<String> {
-    let relational_op = match c.peek() {
-        Some(Token::Symbol(op @ ('<' | '>'))) => Some(op.to_string()),
-        Some(Token::Op(op @ ("<=" | ">="))) => Some(op.to_string()),
-        _ => None,
-    };
-
-    if let Some(op) = relational_op {
-        c.next();
-        return Some(format!("{op} {}", render(&parse_expression(c)?)));
-    }
-
-    let checkpoint = c.save();
-    let type_pattern = parse_type(c).and_then(|type_name| match c.peek() {
-        Some(Token::Ident(name)) if !PATTERN_KEYWORDS.contains(&name) => {
-            let name = name.to_string();
-            c.next();
-            Some(format!("{type_name} {name}"))
-        }
-        _ => None,
-    });
-
-    match type_pattern {
-        Some(pattern) => Some(pattern),
-        None => {
-            c.restore(checkpoint);
-            Some(render(&parse_expression(c)?))
-        }
-    }
-}
-
-/// Parses a `not` pattern (`not null`), or falls through to a
-/// primary pattern. Right-associative, so `not not p` parses as
-/// `not (not p)`.
-fn parse_not_pattern(c: &mut Cursor) -> Option<String> {
-    if matches!(c.peek(), Some(Token::Ident("not"))) {
-        c.next();
-        let operand = parse_not_pattern(c)?;
-        return Some(format!("not {operand}"));
-    }
-    parse_primary_pattern(c)
-}
-
-/// Parses `and`-combined patterns (`int i and > 0`); `and` binds
-/// tighter than `or`, matching C#'s pattern-combinator precedence.
-fn parse_and_pattern(c: &mut Cursor) -> Option<String> {
-    let mut left = parse_not_pattern(c)?;
-    while matches!(c.peek(), Some(Token::Ident("and"))) {
-        c.next();
-        let right = parse_not_pattern(c)?;
-        left = format!("{left} and {right}");
-    }
-    Some(left)
-}
-
-/// Parses `or`-combined patterns (`> 0 or < -10`), optionally
-/// followed by a `when` guard clause -- the full pattern grammar
-/// shared by `case` labels and `switch` expression arms.
-fn parse_switch_pattern(c: &mut Cursor) -> Option<String> {
-    let mut left = parse_and_pattern(c)?;
-    while matches!(c.peek(), Some(Token::Ident("or"))) {
-        c.next();
-        let right = parse_and_pattern(c)?;
-        left = format!("{left} or {right}");
-    }
-
-    if matches!(c.peek(), Some(Token::Ident("when"))) {
-        c.next();
-        let guard = parse_expression(c)?;
-        return Some(format!("{left} when {}", render(&guard)));
-    }
-
-    Some(left)
-}
-
 /// Formats a `case` label: `case pattern:`, where `pattern` may
 /// include a `when` guard (see [`parse_switch_pattern`]). `tokens`
 /// must not include the trailing `:`.
@@ -499,21 +404,30 @@ fn try_format_default_label(tokens: &[Token]) -> Option<String> {
     Some("default:".to_string())
 }
 
-/// Formats the header line of a declaration initialized by a
-/// `switch` expression: `type name = expr switch`. Only a single
-/// declarator is supported. The expression's arms (see
+/// Formats the header line of a declaration or `return` statement
+/// initialized/followed by a `switch` expression: `type name = expr
+/// switch` or `return expr switch`. Only a single declarator is
+/// supported in the declaration form. The expression's arms (see
 /// [`try_format_switch_arm`]) and closing `};` live on their own
-/// lines and aren't parsed here. `tokens` must not include a trailing
-/// `{`, if the source had one -- the caller reattaches it.
+/// lines and aren't parsed here -- for the fully inline form (all on
+/// one line), the general expression grammar's `Expr::Switch` already
+/// handles it wherever an expression is allowed (declarators, `return`,
+/// call arguments, ...). `tokens` must not include a trailing `{`, if
+/// the source had one -- the caller reattaches it.
 fn try_format_switch_expression_header(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
 
-    let type_name = parse_type(&mut c)?;
-    let name = as_ident(c.next()?)?.to_string();
-
-    if !matches!(c.next()?, Token::Symbol('=')) {
-        return None;
-    }
+    let prefix = if matches!(c.peek(), Some(Token::Ident("return"))) {
+        c.next();
+        "return".to_string()
+    } else {
+        let type_name = parse_type(&mut c)?;
+        let name = as_ident(c.next()?)?.to_string();
+        if !matches!(c.next()?, Token::Symbol('=')) {
+            return None;
+        }
+        format!("{type_name} {name} =")
+    };
 
     let scrutinee = parse_expression(&mut c)?;
 
@@ -525,10 +439,7 @@ fn try_format_switch_expression_header(tokens: &[Token]) -> Option<String> {
         return None;
     }
 
-    Some(format!(
-        "{type_name} {name} = {} switch",
-        render(&scrutinee)
-    ))
+    Some(format!("{prefix} {} switch", render(&scrutinee)))
 }
 
 /// Formats one arm of a `switch` expression: `pattern => result`,
@@ -537,84 +448,38 @@ fn try_format_switch_expression_header(tokens: &[Token]) -> Option<String> {
 /// `,`, if the source had one -- the caller reattaches it.
 fn try_format_switch_arm(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
-    let arm = parse_switch_arm(&mut c)?;
+    let (pattern, result) = parse_switch_arm(&mut c)?;
     if !c.at_end() {
         return None;
     }
-    Some(arm)
-}
-
-/// Parses one `switch` arm's `pattern => result` (see
-/// [`parse_switch_pattern`]), without requiring the cursor to be
-/// fully consumed afterward -- shared by [`try_format_switch_arm`]
-/// (one arm per line) and [`try_format_inline_switch_expression`]
-/// (all arms on one line).
-fn parse_switch_arm(c: &mut Cursor) -> Option<String> {
-    let pattern = parse_switch_pattern(c)?;
-    if !matches!(c.next()?, Token::Op("=>")) {
-        return None;
-    }
-    let result = parse_expression(c)?;
     Some(format!("{pattern} => {}", render(&result)))
 }
 
-/// Formats a fully inline declaration whose initializer is a
-/// complete `switch` expression, all on one line: `type name = expr
-/// switch { pattern => result, ... };`. Only a single declarator is
-/// supported, and only in a declaration's initializer position --
-/// `return`/argument position and multi-line arm lists aren't
-/// recognized here (see [`try_format_switch_expression_header`] for
-/// the multi-line form). `tokens` must not include the trailing `;`.
-fn try_format_inline_switch_expression(tokens: &[Token]) -> Option<String> {
+/// Formats a `return` statement: bare `return;`, or `return expr;`.
+/// Since `switch` expressions are part of the general expression
+/// grammar (`expr::Expr::Switch`), `return v switch { ... };` -- fully
+/// inline -- is already handled here with no switch-specific code;
+/// only the multi-line header form needs
+/// [`try_format_switch_expression_header`]. `tokens` must not include
+/// the trailing `;`.
+fn try_format_return_statement(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
 
-    let type_name = parse_type(&mut c)?;
-    let name = as_ident(c.next()?)?.to_string();
-
-    if !matches!(c.next()?, Token::Symbol('=')) {
+    if as_ident(c.next()?) != Some("return") {
         return None;
     }
 
-    let scrutinee = parse_expression(&mut c)?;
-
-    if as_ident(c.next()?) != Some("switch") {
-        return None;
+    if c.at_end() {
+        return Some("return;".to_string());
     }
 
-    if !matches!(c.next()?, Token::Symbol('{')) {
-        return None;
-    }
-
-    let mut arms = Vec::new();
-    if !matches!(c.peek(), Some(Token::Symbol('}'))) {
-        loop {
-            arms.push(parse_switch_arm(&mut c)?);
-
-            match c.peek() {
-                Some(Token::Symbol(',')) => {
-                    c.next();
-                    if matches!(c.peek(), Some(Token::Symbol('}'))) {
-                        break;
-                    }
-                }
-                _ => break,
-            }
-        }
-    }
-
-    if !matches!(c.next()?, Token::Symbol('}')) {
-        return None;
-    }
+    let expr = parse_expression(&mut c)?;
 
     if !c.at_end() {
         return None;
     }
 
-    Some(format!(
-        "{type_name} {name} = {} switch {{ {} }};",
-        render(&scrutinee),
-        arms.join(", ")
-    ))
+    Some(format!("return {};", render(&expr)))
 }
 
 /// Formats an `else` statement's header: `else` or `else if
@@ -866,7 +731,7 @@ pub fn format_statement_content(content: &str) -> Option<String> {
     if matches!(tokens.last(), Some(Token::Symbol(';'))) {
         let body = &tokens[..tokens.len() - 1];
         return try_format_declaration(body)
-            .or_else(|| try_format_inline_switch_expression(body))
+            .or_else(|| try_format_return_statement(body))
             .or_else(|| try_format_do_while_tail(body))
             .or_else(|| try_format_do_while_close(body))
             .or_else(|| try_format_expression_statement(body));

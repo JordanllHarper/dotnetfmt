@@ -8,11 +8,13 @@
 //! `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic, shift
 //! (`<<`/`>>`), relational, equality, bitwise `&`/`^`/`|`, `&&`/`||`,
 //! null coalescing (`??`), assignment (including compound
-//! assignment), the `?:` conditional (ternary) operator, and
-//! interpolated string literals (`$"..."`, holes reformatted
-//! recursively -- see `interpolated.rs`). Anything outside that
-//! (object/collection initializers, lambdas, ...) simply fails to
-//! parse, and the caller falls back to leaving the source untouched.
+//! assignment), the `?:` conditional (ternary) operator, interpolated
+//! string literals (`$"..."`, holes reformatted recursively -- see
+//! `interpolated.rs`), and `switch` expressions (`scrutinee switch {
+//! pattern => result, ... }`, patterns per [`parse_switch_pattern`]).
+//! Anything outside that (object/collection initializers, lambdas,
+//! ...) simply fails to parse, and the caller falls back to leaving
+//! the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -67,6 +69,13 @@ pub enum Expr {
     Assign(&'static str, Box<Expr>, Box<Expr>),
     /// `cond ? when_true : when_false`.
     Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// `scrutinee switch { pattern => result, ... }`. Patterns are
+    /// rendered to their final text up front by [`parse_switch_pattern`]
+    /// rather than modeled as their own `Expr` variant -- they're a
+    /// distinct grammar (relational/type/expression patterns combined
+    /// with `and`/`or`/`not`/`when`), not reducible to expressions, and
+    /// nothing downstream needs to inspect their structure.
+    Switch(Box<Expr>, Vec<(String, Expr)>),
 }
 
 pub fn render(expr: &Expr) -> String {
@@ -123,6 +132,14 @@ pub fn render(expr: &Expr) -> String {
                 render(when_true),
                 render(when_false)
             )
+        }
+        Expr::Switch(scrutinee, arms) => {
+            let arms = arms
+                .iter()
+                .map(|(pattern, result)| format!("{pattern} => {}", render(result)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} switch {{ {arms} }}", render(scrutinee))
         }
     }
 }
@@ -357,6 +374,19 @@ fn parse_postfix(c: &mut Cursor) -> Option<Expr> {
         }
     }
 
+    if matches!(c.peek(), Some(Token::Ident("switch"))) {
+        // Only commit to a switch expression once `{` is confirmed --
+        // the multi-line header form (`expr switch` with the arm list
+        // on later lines) must leave `switch` unconsumed so
+        // `statement.rs`'s header parser can pick it up instead.
+        let checkpoint = c.save();
+        c.next();
+        if matches!(c.peek(), Some(Token::Symbol('{'))) {
+            return parse_switch_tail(c, expr);
+        }
+        c.restore(checkpoint);
+    }
+
     if let Some(Token::Op(op @ ("++" | "--"))) = c.peek() {
         c.next();
         return Some(Expr::PostfixUnary(op, Box::new(expr)));
@@ -485,4 +515,163 @@ fn parse_array_initializer(c: &mut Cursor) -> Option<Vec<Expr>> {
         return None;
     }
     parse_arg_list(c, '}')
+}
+
+/// Parses a `switch` expression's `{ pattern => result, ... }` arm
+/// list, with `scrutinee` and the `switch` keyword already consumed.
+fn parse_switch_tail(c: &mut Cursor, scrutinee: Expr) -> Option<Expr> {
+    if !matches!(c.next()?, Token::Symbol('{')) {
+        return None;
+    }
+
+    let mut arms = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol('}'))) {
+        loop {
+            arms.push(parse_switch_arm(c)?);
+            if let Some(Token::Symbol(',')) = c.peek() {
+                c.next();
+                if matches!(c.peek(), Some(Token::Symbol('}'))) {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    if !matches!(c.next()?, Token::Symbol('}')) {
+        return None;
+    }
+
+    Some(Expr::Switch(Box::new(scrutinee), arms))
+}
+
+/// Parses one `switch` arm: `pattern => result`, where `pattern` may
+/// include a `when` guard (see [`parse_switch_pattern`]). Shared by
+/// [`parse_switch_tail`] (an inline switch expression) and
+/// `statement.rs`'s per-line arm formatting for the multi-line form.
+pub(super) fn parse_switch_arm(c: &mut Cursor) -> Option<(String, Expr)> {
+    let pattern = parse_switch_pattern(c)?;
+    if !matches!(c.next()?, Token::Op("=>")) {
+        return None;
+    }
+    let result = parse_assignment(c)?;
+    Some((pattern, result))
+}
+
+/// Words that are contextual keywords in pattern position and so
+/// can't double as a type pattern's binding identifier -- e.g. `case
+/// int and > 0:` must keep `and` available to [`parse_and_pattern`]
+/// rather than letting the type pattern swallow it as a binding named
+/// `and`.
+const PATTERN_KEYWORDS: &[&str] = &["when", "and", "or", "not"];
+
+/// Parses a single relational/type/expression pattern, or a
+/// parenthesized sub-pattern -- the base case of the pattern grammar,
+/// with no `and`/`or`/`not`/`when` of its own. Recognizes, in order:
+///
+///   - a **parenthesized pattern** (`(int i and > 0)`), grouping any
+///     `or`-combined sub-pattern so it can be combined further by the
+///     caller (e.g. `(int i and > 0) or < -10`);
+///   - a **relational pattern** (`> 5`, `<= 0`): a bare relational
+///     operator followed by a constant expression;
+///   - a **type pattern** (`int i`, `List<int> items`): a type
+///     (reusing [`super::statement::parse_type`]) immediately followed
+///     by a binding identifier (or `_` discard) -- tried with
+///     backtracking, since a leading identifier could just as easily
+///     start a plain expression pattern instead (`Color.Red`,
+///     `someConstant`);
+///   - otherwise, a plain **expression pattern** (literal, identifier,
+///     member access, or `_`).
+pub(super) fn parse_primary_pattern(c: &mut Cursor) -> Option<String> {
+    if matches!(c.peek(), Some(Token::Symbol('('))) {
+        c.next();
+        let inner = parse_or_pattern(c)?;
+        if !matches!(c.next()?, Token::Symbol(')')) {
+            return None;
+        }
+        return Some(format!("({inner})"));
+    }
+
+    let relational_op = match c.peek() {
+        Some(Token::Symbol(op @ ('<' | '>'))) => Some(op.to_string()),
+        Some(Token::Op(op @ ("<=" | ">="))) => Some(op.to_string()),
+        _ => None,
+    };
+
+    if let Some(op) = relational_op {
+        c.next();
+        return Some(format!("{op} {}", render(&parse_expression(c)?)));
+    }
+
+    let checkpoint = c.save();
+    let type_pattern = super::statement::parse_type(c).and_then(|type_name| match c.peek() {
+        Some(Token::Ident(name)) if !PATTERN_KEYWORDS.contains(&name) => {
+            let name = name.to_string();
+            c.next();
+            Some(format!("{type_name} {name}"))
+        }
+        _ => None,
+    });
+
+    match type_pattern {
+        Some(pattern) => Some(pattern),
+        None => {
+            c.restore(checkpoint);
+            Some(render(&parse_expression(c)?))
+        }
+    }
+}
+
+/// Parses a `not` pattern (`not null`), or falls through to a
+/// primary pattern. Right-associative, so `not not p` parses as
+/// `not (not p)`.
+fn parse_not_pattern(c: &mut Cursor) -> Option<String> {
+    if matches!(c.peek(), Some(Token::Ident("not"))) {
+        c.next();
+        let operand = parse_not_pattern(c)?;
+        return Some(format!("not {operand}"));
+    }
+    parse_primary_pattern(c)
+}
+
+/// Parses `and`-combined patterns (`int i and > 0`); `and` binds
+/// tighter than `or`, matching C#'s pattern-combinator precedence.
+fn parse_and_pattern(c: &mut Cursor) -> Option<String> {
+    let mut left = parse_not_pattern(c)?;
+    while matches!(c.peek(), Some(Token::Ident("and"))) {
+        c.next();
+        let right = parse_not_pattern(c)?;
+        left = format!("{left} and {right}");
+    }
+    Some(left)
+}
+
+/// Parses `or`-combined patterns (`> 0 or < -10`); `or` binds loosest
+/// among the combinators, and is the level a parenthesized
+/// sub-pattern groups (see [`parse_primary_pattern`]).
+fn parse_or_pattern(c: &mut Cursor) -> Option<String> {
+    let mut left = parse_and_pattern(c)?;
+    while matches!(c.peek(), Some(Token::Ident("or"))) {
+        c.next();
+        let right = parse_and_pattern(c)?;
+        left = format!("{left} or {right}");
+    }
+    Some(left)
+}
+
+/// Parses an `or`-pattern optionally followed by a `when` guard
+/// clause -- the full pattern grammar shared by `case` labels and
+/// `switch` expression arms. `when` binds outside any parenthesized
+/// grouping, so it's handled here rather than in [`parse_or_pattern`].
+pub(super) fn parse_switch_pattern(c: &mut Cursor) -> Option<String> {
+    let left = parse_or_pattern(c)?;
+
+    if matches!(c.peek(), Some(Token::Ident("when"))) {
+        c.next();
+        let guard = parse_expression(c)?;
+        return Some(format!("{left} when {}", render(&guard)));
+    }
+
+    Some(left)
 }

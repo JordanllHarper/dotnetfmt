@@ -31,21 +31,11 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Control flow
 
-- **`for` loop init with no type** — `for (i = 0, j = 10; ...; ...)`
-  isn't recognized; only a declaration (`for (int i = 0, j = 10; ...)`)
-  is, since `format_for_init` only tries `try_format_declarators`.
-- **`foreach` with tuple deconstruction** (`foreach (var (k, v) in
-  dict)`) — the element position only accepts `type name`, not a
-  tuple pattern.
-- **Parenthesized sub-patterns** (`(int i and > 0) or < -10`) —
-  `parse_and_pattern`/`parse_or_pattern` chain flat left-to-right;
-  there's no `Paren`-equivalent pattern node, so grouping parentheses
-  around a sub-pattern aren't parsed.
-- **`switch` expressions outside a declaration's initializer** (`return
-  v switch { ... };`, `Foo(v switch { ... })`) — both the multi-line
-  form (`try_format_switch_expression_header`) and the single-line
-  form (`try_format_inline_switch_expression`) only recognize `type
-  name = expr switch ...`; a switch expression anywhere else is left
+- **Property and list patterns** (`case { Prop: value }:`, `case [1,
+  2, ..]:`) — `parse_primary_pattern` only recognizes relational,
+  type, and expression patterns (plus `and`/`or`/`not`/`when`
+  combinators and parenthesized grouping); property and list pattern
+  syntax isn't part of the grammar, so a `case`/arm using one is left
   untouched.
 
 ## Formatting / layout
