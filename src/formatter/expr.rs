@@ -486,7 +486,11 @@ fn parse_new(c: &mut Cursor) -> Option<Expr> {
     if matches!(c.peek(), Some(Token::Symbol('('))) {
         c.next();
         let args = parse_arg_list(c, ')')?;
-        let initializer = parse_trailing_initializer(c)?;
+        let initializer = if matches!(c.peek(), Some(Token::Symbol('{'))) {
+            Some(parse_array_initializer(c)?)
+        } else {
+            None
+        };
         return Some(Expr::New(None, Some(args), initializer));
     }
 
@@ -495,7 +499,11 @@ fn parse_new(c: &mut Cursor) -> Option<Expr> {
         Some(Token::Symbol('(')) => {
             c.next();
             let args = parse_arg_list(c, ')')?;
-            let initializer = parse_trailing_initializer(c)?;
+            let initializer = if matches!(c.peek(), Some(Token::Symbol('{'))) {
+                Some(parse_array_initializer(c)?)
+            } else {
+                None
+            };
             Some(Expr::New(Some(type_name), Some(args), initializer))
         }
         Some(Token::Symbol('[')) => parse_sized_array_creation(c, type_name),
@@ -515,19 +523,6 @@ fn parse_new(c: &mut Cursor) -> Option<Expr> {
             Some(parse_array_initializer(c)?),
         )),
         _ => None,
-    }
-}
-
-/// Parses a trailing object/collection initializer (`{ X = 1, ... }`)
-/// after `new Type(args)`/`new(args)`, if one is present. The outer
-/// `Option` is the usual parse-failure signal (`?`-propagated by
-/// callers); the inner one means "no initializer" when `{` isn't next
-/// -- not a failure, since the initializer is always optional here.
-fn parse_trailing_initializer(c: &mut Cursor) -> Option<Option<Vec<Expr>>> {
-    if matches!(c.peek(), Some(Token::Symbol('{'))) {
-        Some(Some(parse_array_initializer(c)?))
-    } else {
-        Some(None)
     }
 }
 
