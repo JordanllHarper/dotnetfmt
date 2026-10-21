@@ -40,18 +40,15 @@ impl std::error::Error for FormatError {}
 pub fn format(contents: &str, config: &EditorConfig) -> Result<String, FormatError> {
     let indent_unit = indent_unit(config);
     let mut depth: i32 = 0;
+    let mut formatted = Vec::new();
 
-    let formatted = contents
-        .split("\r\n")
-        .map(|line| {
-            let (rendered, new_depth) = format_line(line, depth, &indent_unit);
-            depth = new_depth;
-            rendered
-        })
-        .collect::<Vec<_>>()
-        .join("\r\n");
+    for line in contents.split("\r\n") {
+        let (rendered, new_depth) = format_line(line, depth, &indent_unit);
+        depth = new_depth;
+        formatted.extend(rendered);
+    }
 
-    Ok(formatted)
+    Ok(formatted.join("\r\n"))
 }
 
 fn indent_unit(config: &EditorConfig) -> String {
@@ -69,15 +66,39 @@ fn indent_unit(config: &EditorConfig) -> String {
     }
 }
 
-/// Formats one line at the given brace `depth` (the depth in effect
-/// *before* this line), returning the rendered line and the depth in
-/// effect after it.
-fn format_line(line: &str, depth: i32, indent_unit: &str) -> (String, i32) {
+/// Formats one source line at the given brace `depth` (the depth in
+/// effect *before* this line), returning the rendered line(s) and the
+/// depth in effect after it. Ordinarily this is a single line in, a
+/// single line out; a line that both closes and opens a brace (`} else
+/// {`, `if (x) { y(); }`) is split into the several logical lines the
+/// one-statement-per-line model expects (see
+/// [`statement::split_brace_segments`]), each reindented in turn as
+/// the brace depth changes across it.
+fn format_line(line: &str, depth: i32, indent_unit: &str) -> (Vec<String>, i32) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return (String::new(), depth);
+        return (vec![String::new()], depth);
     }
 
+    if let Some(segments) = statement::split_brace_segments(trimmed) {
+        let mut rendered = Vec::with_capacity(segments.len());
+        let mut depth = depth;
+        for segment in segments {
+            let (line, new_depth) = format_single_line(&segment, depth, indent_unit);
+            rendered.push(line);
+            depth = new_depth;
+        }
+        return (rendered, depth);
+    }
+
+    let (line, new_depth) = format_single_line(trimmed, depth, indent_unit);
+    (vec![line], new_depth)
+}
+
+/// Formats one already-trimmed logical line -- never more than one
+/// statement -- at the given brace `depth`, returning the rendered
+/// (indented) line and the depth in effect after it.
+fn format_single_line(trimmed: &str, depth: i32, indent_unit: &str) -> (String, i32) {
     let tokens = tokenize(trimmed);
     let starts_with_close = matches!(tokens.first(), Some(Token::Symbol('}')));
     let render_depth = if starts_with_close { depth - 1 } else { depth }.max(0);
@@ -1799,5 +1820,108 @@ mod tests {
         let input = "void Foo()\r\n{\r\nif (x>0)\r\n{\r\n}\r\n}";
         let expected = "void Foo()\r\n{\r\n    if (x > 0)\r\n    {\r\n    }\r\n}";
         assert_eq!(fmt(input), expected);
+    }
+
+    // --- multiple braces per source line ---------------------------------
+
+    #[test]
+    fn combined_close_then_else_open_is_split_onto_separate_lines() {
+        assert_eq!(fmt("} else {"), "}\r\nelse\r\n{");
+    }
+
+    #[test]
+    fn combined_close_then_else_if_open_is_split_onto_separate_lines() {
+        assert_eq!(fmt("} else if(x>0) {"), "}\r\nelse if (x > 0)\r\n{");
+    }
+
+    #[test]
+    fn combined_close_then_unrecognized_header_is_left_alone() {
+        // Two bare identifiers with nothing recognizable between them
+        // -- the combined line is left untouched rather than split and
+        // half-formatted.
+        let line = "} foo bar {";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
+    fn if_else_chain_with_combined_close_open_is_reindented_and_reformatted() {
+        let input = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "if(x>0)\r\n",
+            "{\r\n",
+            "Console.WriteLine(\"positive\");\r\n",
+            "} else {\r\n",
+            "Console.WriteLine(\"non-positive\");\r\n",
+            "}\r\n",
+            "}",
+        );
+        let expected = concat!(
+            "void Foo()\r\n",
+            "{\r\n",
+            "    if (x > 0)\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(\"positive\");\r\n",
+            "    }\r\n",
+            "    else\r\n",
+            "    {\r\n",
+            "        Console.WriteLine(\"non-positive\");\r\n",
+            "    }\r\n",
+            "}",
+        );
+        assert_eq!(fmt(input), expected);
+    }
+
+    #[test]
+    fn single_line_if_block_body_is_split_onto_separate_lines() {
+        assert_eq!(fmt("if(x>0){y();}"), "if (x > 0) {\r\n    y();\r\n}");
+    }
+
+    #[test]
+    fn single_line_block_with_multiple_statements_is_split_onto_separate_lines() {
+        assert_eq!(
+            fmt("if(x>0){a();b();}"),
+            "if (x > 0) {\r\n    a();\r\n    b();\r\n}"
+        );
+    }
+
+    #[test]
+    fn single_line_block_with_empty_body_is_split_onto_separate_lines() {
+        assert_eq!(fmt("if(x>0){}"), "if (x > 0) {\r\n}");
+    }
+
+    #[test]
+    fn single_line_method_body_is_split_onto_separate_lines() {
+        assert_eq!(fmt("void Foo(){y();}"), "void Foo() {\r\n    y();\r\n}");
+    }
+
+    #[test]
+    fn single_line_block_is_reindented_at_its_own_depth() {
+        let input = "void Foo()\r\n{\r\nif(x>0){y();}\r\n}";
+        let expected = "void Foo()\r\n{\r\n    if (x > 0) {\r\n        y();\r\n    }\r\n}";
+        assert_eq!(fmt(input), expected);
+    }
+
+    #[test]
+    fn bare_brace_block_body_is_split_onto_separate_lines() {
+        // No header before the `{` -- an anonymous scope.
+        assert_eq!(fmt("{y();}"), "{\r\n    y();\r\n}");
+    }
+
+    #[test]
+    fn single_line_block_with_nested_braces_is_left_alone() {
+        // A nested block inside the body isn't part of the recognized
+        // shape -- left untouched entirely rather than half-split.
+        let line = "if(x>0){if(y>0){z();}}";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
+    fn single_line_block_with_unformattable_statement_is_left_alone() {
+        // Lambdas aren't part of the expression grammar, so the
+        // statement inside the body can't be recognized -- the whole
+        // line, not just that statement, is left untouched.
+        let line = "if (x > 0) { var f = x=>x+1; }";
+        assert_eq!(fmt(line), line);
     }
 }

@@ -474,3 +474,25 @@ pub fn as_ident<'a>(token: Token<'a>) -> Option<&'a str> {
         _ => None,
     }
 }
+
+/// Reconstructs a space-separated source approximation of `tokens`.
+/// Lossy on whitespace (every token boundary gets exactly one space),
+/// but that's fine for its only use -- re-feeding a token slice back
+/// through [`tokenize`] and the statement parsers, which never rely on
+/// the original spacing.
+pub(super) fn render_tokens(tokens: &[Token]) -> String {
+    tokens
+        .iter()
+        .map(|t| match *t {
+            Token::Ident(s)
+            | Token::Int(s)
+            | Token::Float(s)
+            | Token::Str(s)
+            | Token::InterpolatedStr(s)
+            | Token::Char(s) => s.to_string(),
+            Token::Symbol(c) => c.to_string(),
+            Token::Op(s) => s.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
