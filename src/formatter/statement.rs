@@ -143,9 +143,11 @@ pub fn try_format_expression_statement(tokens: &[Token]) -> Option<String> {
 }
 
 /// Formats a method signature: `modifiers* type name(type name, ...)`,
-/// with an optional `= default` on each parameter. `tokens` must not
-/// include a trailing `{`, if the source had one -- the caller
-/// reattaches it.
+/// with an optional `= default` on each parameter. Also recognizes a
+/// constructor (`modifiers* name(...)`, no return type) and a generic
+/// method's type parameter list (`modifiers* type name<T, ...>(...)`).
+/// `tokens` must not include a trailing `{`, if the source had one --
+/// the caller reattaches it.
 fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
 
@@ -164,8 +166,24 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
         }
     }
 
-    let return_type = parse_type(&mut c)?;
-    let name = as_ident(c.next()?)?.to_string();
+    // A constructor has no return type -- just its (class) name
+    // directly before `(`. Distinguishing the two doesn't need any
+    // knowledge of the enclosing class: an ordinary method always has
+    // *two* identifiers before `(` (return type, then name), so
+    // seeing `(` right after the first one means it was the name all
+    // along, not a return type.
+    let first = parse_type(&mut c)?;
+    let (return_type, name) = if matches!(c.peek(), Some(Token::Symbol('('))) {
+        (None, first)
+    } else {
+        (Some(first), as_ident(c.next()?)?.to_string())
+    };
+
+    let type_params = if matches!(c.peek(), Some(Token::Symbol('<'))) {
+        Some(parse_type_parameter_list(&mut c)?)
+    } else {
+        None
+    };
 
     match c.next()? {
         Token::Symbol('(') => {}
@@ -208,10 +226,41 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
         .iter()
         .map(|m| format!("{m} "))
         .collect::<String>();
+    let return_type = match return_type {
+        Some(rt) => format!("{rt} "),
+        None => String::new(),
+    };
+    let type_params = match type_params {
+        Some(params) => format!("<{}>", params.join(", ")),
+        None => String::new(),
+    };
     Some(format!(
-        "{modifiers}{return_type} {name}({})",
+        "{modifiers}{return_type}{name}{type_params}({})",
         params.join(", ")
     ))
+}
+
+/// Parses a method's generic type parameter list, `<T, U>`, with the
+/// opening `<` not yet consumed. Unlike a type *argument* list (see
+/// [`parse_type`]), each type *parameter* is a plain identifier --
+/// it's declaring a new name, not referencing an existing type, so it
+/// can't itself be generic.
+fn parse_type_parameter_list(c: &mut Cursor) -> Option<Vec<String>> {
+    c.next(); // '<'
+    let mut params = Vec::new();
+    loop {
+        params.push(as_ident(c.next()?)?.to_string());
+        match c.peek() {
+            Some(Token::Symbol(',')) => {
+                c.next();
+            }
+            _ => break,
+        }
+    }
+    match c.next()? {
+        Token::Symbol('>') => Some(params),
+        _ => None,
+    }
 }
 
 /// Formats a class declaration: `modifiers* class Name<T, ...>? (:

@@ -23,10 +23,11 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Methods & functions
 
-- **Constructors** — a method signature requires a return type before
-  the name, so `public Foo(int x)` doesn't parse as a signature.
-- **Generic methods** (`T Foo<T>(T x)`) — no generic parameter list
-  after the method name.
+- **Generic type parameter constraints** (`T Foo<T>(T x) where T :
+  class`) — `try_format_method_signature` parses the `<T, ...>` list
+  itself but not a trailing `where` clause; the leftover tokens mean
+  the whole signature is left untouched rather than dropping the
+  constraint.
 
 ## Control flow
 
