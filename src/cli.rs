@@ -1,11 +1,11 @@
-//! Command-line interface definition for dotnet_fmt.
+//! Command-line interface definition for dotnetfmt.
 //!
 //! Two invocation shapes are supported:
 //!
-//!   dotnet_fmt file <path>
+//!   dotnetfmt file <path>
 //!       Format a single C# file.
 //!
-//!   dotnet_fmt workspace [--workspace <path>]
+//!   dotnetfmt workspace [--workspace <path>]
 //!       Format every C# file under a workspace directory. When
 //!       `--workspace` is omitted, the current directory is used.
 //!       Note: Currently NOT implemented
@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "dotnet_fmt",
+    name = "dotnetfmt",
     about = "A whitespace formatter for C#, resembling `dotnet format whitespace`",
     version
 )]
