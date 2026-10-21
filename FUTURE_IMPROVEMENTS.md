@@ -4,23 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## Object creation
-
-- **Indexed collection initializers** (`new Dictionary<string, int>
-  { ["a"] = 1 }`) — each initializer item is parsed as a full
-  expression (`parse_assignment`), and `["a"]` isn't a valid primary
-  expression on its own (`[` only starts an indexer on an existing
-  operand); an item using this form leaves the whole statement
-  untouched.
-
-## Methods & functions
-
-- **Generic type parameter constraints** (`T Foo<T>(T x) where T :
-  class`) — `try_format_method_signature` parses the `<T, ...>` list
-  itself but not a trailing `where` clause; the leftover tokens mean
-  the whole signature is left untouched rather than dropping the
-  constraint.
-
 ## Control flow
 
 - **Property and list patterns** (`case { Prop: value }:`, `case [1,

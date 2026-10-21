@@ -796,12 +796,34 @@ mod tests {
     }
 
     #[test]
-    fn indexed_collection_initializer_is_not_recognized() {
-        // `["a"] = 1` isn't a valid primary expression (`[` only
-        // starts an indexer on an existing operand, never a value on
-        // its own), so this initializer item -- and so the whole
-        // statement -- is left untouched.
-        let line = "var x=new Dictionary<string,int>{[\"a\"]=1};";
+    fn indexed_collection_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new Dictionary<string,int>{[\"a\"]=1};"),
+            "var x = new Dictionary<string, int> { [\"a\"] = 1 };"
+        );
+    }
+
+    #[test]
+    fn indexed_collection_initializer_with_multiple_entries_is_formatted() {
+        assert_eq!(
+            fmt("var x=new Dictionary<string,int>{[\"a\"]=1,[\"b\"]=2};"),
+            "var x = new Dictionary<string, int> { [\"a\"] = 1, [\"b\"] = 2 };"
+        );
+    }
+
+    #[test]
+    fn indexed_collection_initializer_with_multiple_keys_is_formatted() {
+        // A multi-dimensional indexer (e.g. a 2D grid type) can take
+        // more than one key expression per entry.
+        assert_eq!(
+            fmt("var x=new Grid{[0,0]=1};"),
+            "var x = new Grid { [0, 0] = 1 };"
+        );
+    }
+
+    #[test]
+    fn malformed_indexed_collection_initializer_is_left_alone() {
+        let line = "var x = new Dictionary<string, int> { [\"a\"] 1 };";
         assert_eq!(fmt(line), line);
     }
 
@@ -901,13 +923,27 @@ mod tests {
     }
 
     #[test]
-    fn generic_method_type_parameter_constraint_is_not_recognized() {
-        // The `where` clause after the parameter list isn't part of
-        // the grammar yet; the leftover tokens mean the whole
-        // signature is left untouched rather than dropping the
-        // constraint.
-        let line = "T Foo<T>(T x) where T : class";
-        assert_eq!(fmt(line), line);
+    fn generic_method_type_parameter_constraint_is_formatted() {
+        assert_eq!(
+            fmt("T   Foo<T>(T x)where T:class"),
+            "T Foo<T>(T x) where T : class"
+        );
+    }
+
+    #[test]
+    fn generic_method_with_multiple_constraints_is_formatted() {
+        assert_eq!(
+            fmt("T Foo<T>(T x) where T : IDisposable, new()"),
+            "T Foo<T>(T x) where T : IDisposable, new()"
+        );
+    }
+
+    #[test]
+    fn generic_method_with_multiple_where_clauses_is_formatted() {
+        assert_eq!(
+            fmt("void Foo<T,U>(T x,U y) where T : class where U : struct"),
+            "void Foo<T, U>(T x, U y) where T : class where U : struct"
+        );
     }
 
     // --- class declarations ------------------------------------------
@@ -936,6 +972,22 @@ mod tests {
     #[test]
     fn generic_class_declaration_is_formatted() {
         assert_eq!(fmt("class Foo<T>"), "class Foo<T>");
+    }
+
+    #[test]
+    fn generic_class_declaration_with_constraint_is_formatted() {
+        assert_eq!(
+            fmt("class   Foo<T>where T:class"),
+            "class Foo<T> where T : class"
+        );
+    }
+
+    #[test]
+    fn generic_class_declaration_with_base_list_and_constraint_is_formatted() {
+        assert_eq!(
+            fmt("public class Foo<T>:IBaz where T : struct"),
+            "public class Foo<T> : IBaz where T : struct"
+        );
     }
 
     // --- if statements --------------------------------------------------

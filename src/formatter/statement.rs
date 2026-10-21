@@ -258,6 +258,8 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
         _ => return None,
     }
 
+    let where_clauses = parse_where_clauses(&mut c)?;
+
     if !c.at_end() {
         return None;
     }
@@ -277,9 +279,65 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
         String::new()
     };
     Some(format!(
-        "{modifiers}{return_type}{name}{type_params}({})",
-        params.join(", ")
+        "{modifiers}{return_type}{name}{type_params}({}){}",
+        params.join(", "),
+        render_where_clauses(&where_clauses)
     ))
+}
+
+/// Parses the type parameter constraint list trailing a generic
+/// signature: zero or more `where T : constraint, ...` clauses, e.g.
+/// `where T : class where U : struct, new()`. Each constraint is
+/// either a type (`class`, `struct`, `unmanaged`, a base type, or
+/// another type parameter -- all parsed the same way by
+/// [`parse_type`]) or the literal `new()`, which isn't a valid type on
+/// its own and so is special-cased.
+fn parse_where_clauses(c: &mut Cursor) -> Option<Vec<String>> {
+    let mut clauses = Vec::new();
+    while c.peek().and_then(as_ident) == Some("where") {
+        c.next();
+        let param = as_ident(c.next()?)?.to_string();
+        let Some(Token::Symbol(':')) = c.next() else {
+            return None;
+        };
+
+        let mut constraints = Vec::new();
+        loop {
+            let checkpoint = c.save();
+            let is_constructor_constraint = as_ident(c.next()?) == Some("new")
+                && matches!(c.peek(), Some(Token::Symbol('(')));
+            let constraint = if is_constructor_constraint {
+                c.next();
+                let Some(Token::Symbol(')')) = c.next() else {
+                    return None;
+                };
+                "new()".to_string()
+            } else {
+                c.restore(checkpoint);
+                parse_type(c)?
+            };
+            constraints.push(constraint);
+
+            if let Some(Token::Symbol(',')) = c.peek() {
+                c.next();
+            } else {
+                break;
+            }
+        }
+        clauses.push(format!("where {param} : {}", constraints.join(", ")));
+    }
+    Some(clauses)
+}
+
+/// Renders a type parameter constraint list for appending to a
+/// signature, e.g. `[]` -> `""`, `["where T : class"]` -> `" where T :
+/// class"`.
+fn render_where_clauses(clauses: &[String]) -> String {
+    if clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", clauses.join(" "))
+    }
 }
 
 /// Parses a method's generic type parameter list, `<T, U>`, with the
@@ -345,6 +403,8 @@ fn try_format_class_declaration(tokens: &[Token]) -> Option<String> {
         }
     }
 
+    let where_clauses = parse_where_clauses(&mut c)?;
+
     if !c.at_end() {
         return None;
     }
@@ -358,7 +418,10 @@ fn try_format_class_declaration(tokens: &[Token]) -> Option<String> {
     } else {
         format!(" : {}", bases.join(", "))
     };
-    Some(format!("{modifiers}class {name}{base_list}"))
+    Some(format!(
+        "{modifiers}class {name}{base_list}{}",
+        render_where_clauses(&where_clauses)
+    ))
 }
 
 /// Formats a `keyword (condition)` statement header -- the shape
