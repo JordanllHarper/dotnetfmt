@@ -103,22 +103,23 @@ pub fn render(expr: &Expr) -> String {
             format!("{}[{}]", render(target), args)
         }
         Expr::New(type_name, args, initializer) => {
-            let name_part = match type_name {
-                Some(name) => format!("new {name}"),
-                None => "new".to_string(),
+            let name_part = if let Some(name) = type_name {
+                format!("new {name}")
+            } else {
+                "new".to_string()
             };
-            let args_part = match args {
-                Some(args) => {
-                    format!(
-                        "({})",
-                        args.iter().map(render).collect::<Vec<_>>().join(", ")
-                    )
-                }
-                None => String::new(),
+            let args_part = if let Some(args) = args {
+                format!(
+                    "({})",
+                    args.iter().map(render).collect::<Vec<_>>().join(", ")
+                )
+            } else {
+                String::new()
             };
-            let init_part = match initializer {
-                Some(items) => format!(" {}", render_initializer(items)),
-                None => String::new(),
+            let init_part = if let Some(items) = initializer {
+                format!(" {}", render_initializer(items))
+            } else {
+                String::new()
             };
             format!("{name_part}{args_part}{init_part}")
         }
