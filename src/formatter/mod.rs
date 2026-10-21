@@ -610,12 +610,25 @@ mod tests {
     }
 
     #[test]
-    fn global_alias_qualifier_is_not_recognized() {
-        // `::` lexes as two separate `:` symbols (no `::` operator),
-        // so `global` parses as a type on its own and the following
-        // `:` isn't anything parse_type or the declarator check
-        // expects; the whole line is left untouched.
-        let line = "global::System.String s;";
+    fn global_alias_qualifier_is_formatted() {
+        assert_eq!(
+            fmt("global::System.String   s;"),
+            "global::System.String s;"
+        );
+    }
+
+    #[test]
+    fn extern_alias_qualifier_is_formatted() {
+        assert_eq!(fmt("MyAlias::Foo   f;"), "MyAlias::Foo f;");
+    }
+
+    #[test]
+    fn trailing_alias_qualifier_without_identifier_is_left_alone() {
+        // `::` not followed by an identifier isn't guessed at; `global`
+        // is still returned as the parsed type, so the leftover `::`
+        // trips the declarator check and the whole line is left
+        // untouched.
+        let line = "global::;";
         assert_eq!(fmt(line), line);
     }
 

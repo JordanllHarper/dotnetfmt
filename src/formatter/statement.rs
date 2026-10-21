@@ -42,6 +42,22 @@ const MODIFIERS: &[&str] = &[
 pub(super) fn parse_type(c: &mut Cursor) -> Option<String> {
     let mut rendered = as_ident(c.next()?)?.to_string();
 
+    // Namespace alias qualifier (`global::System.String`, or an
+    // `extern alias`-declared one) -- only valid on the leading
+    // segment, never between dot-qualified segments. As with the `.`
+    // loop below, a `::` not followed by an identifier is left
+    // unconsumed rather than guessed at.
+    if matches!(c.peek(), Some(Token::Op("::"))) {
+        let checkpoint = c.save();
+        c.next();
+        if let Some(name) = c.peek().and_then(as_ident) {
+            c.next();
+            rendered = format!("{rendered}::{name}");
+        } else {
+            c.restore(checkpoint);
+        }
+    }
+
     // Dot-qualified segments (`Namespace.Sub.Type`) -- only a plain
     // chain of identifiers, generics/array rank apply once at the end
     // (`Namespace.Generic<T>.Nested` isn't supported). A `.` not

@@ -13,13 +13,6 @@ they're easy to pick up later instead of being rediscovered.
   operand); an item using this form leaves the whole statement
   untouched.
 
-## Types & declarations
-
-- **The `global::` alias qualifier** (`global::System.String`) — `::`
-  lexes as two separate `:` symbols (there's no `::` operator), so
-  `parse_type` parses `global` as a type on its own and trips on the
-  `:` that follows; a type using this qualifier is left untouched.
-
 ## Methods & functions
 
 - **Generic type parameter constraints** (`T Foo<T>(T x) where T :
