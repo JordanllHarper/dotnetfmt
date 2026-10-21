@@ -477,12 +477,11 @@ mod tests {
 
     #[test]
     fn interpolated_string_unparseable_hole_falls_back() {
-        // Object initializers aren't part of the expression grammar;
-        // this hole is left untouched rather than failing the whole
-        // string.
+        // Lambdas aren't part of the expression grammar; this hole is
+        // left untouched rather than failing the whole string.
         assert_eq!(
-            fmt("var s=$\"{new Foo{X=1}}\";"),
-            "var s = $\"{new Foo{X=1}}\";"
+            fmt("var s=$\"{items.Select(x=>x+1)}\";"),
+            "var s = $\"{items.Select(x=>x+1)}\";"
         );
     }
 
@@ -614,6 +613,19 @@ mod tests {
     }
 
     #[test]
+    fn multi_dimensional_sized_array_creation_is_formatted() {
+        assert_eq!(fmt("var x=new int[2,3];"), "var x = new int[2, 3];");
+    }
+
+    #[test]
+    fn multi_dimensional_sized_array_creation_with_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new int[2,3]{1,2,3,4,5,6};"),
+            "var x = new int[2, 3] { 1, 2, 3, 4, 5, 6 };"
+        );
+    }
+
+    #[test]
     fn sized_array_creation_with_initializer_is_formatted() {
         assert_eq!(
             fmt("var x=new int[5]{1,2,3,4,5};"),
@@ -653,10 +665,66 @@ mod tests {
     }
 
     #[test]
-    fn object_initializer_is_not_recognized() {
-        // Object initializers (`new Foo { ... }`) aren't in the
-        // parsed grammar either.
-        assert_eq!(fmt("var x=new Foo{X=1};"), "var x=new Foo{X=1};");
+    fn object_initializer_without_parens_is_formatted() {
+        assert_eq!(fmt("var x=new Foo{X=1};"), "var x = new Foo { X = 1 };");
+    }
+
+    #[test]
+    fn object_initializer_with_empty_parens_is_formatted() {
+        // The empty `()` is preserved as written, not dropped --
+        // `new Foo()` and `new Foo` without parens are both valid but
+        // distinct source forms.
+        assert_eq!(fmt("var x=new Foo(){X=1};"), "var x = new Foo() { X = 1 };");
+    }
+
+    #[test]
+    fn object_initializer_with_constructor_args_is_formatted() {
+        assert_eq!(
+            fmt("var x=new Foo(1,2){X=1,Y=2};"),
+            "var x = new Foo(1, 2) { X = 1, Y = 2 };"
+        );
+    }
+
+    #[test]
+    fn target_typed_new_with_initializer_is_formatted() {
+        assert_eq!(fmt("Foo x=new(){X=1};"), "Foo x = new() { X = 1 };");
+    }
+
+    #[test]
+    fn collection_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new List<int>{1,2,3};"),
+            "var x = new List<int> { 1, 2, 3 };"
+        );
+    }
+
+    #[test]
+    fn nested_object_initializer_is_formatted() {
+        assert_eq!(
+            fmt("var x=new Foo{Bar=new Baz{X=1}};"),
+            "var x = new Foo { Bar = new Baz { X = 1 } };"
+        );
+    }
+
+    #[test]
+    fn empty_object_initializer_is_formatted() {
+        assert_eq!(fmt("var x=new Foo{};"), "var x = new Foo { };");
+    }
+
+    #[test]
+    fn malformed_object_initializer_is_left_alone() {
+        let line = "var x = new Foo { X = };";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
+    fn indexed_collection_initializer_is_not_recognized() {
+        // `["a"] = 1` isn't a valid primary expression (`[` only
+        // starts an indexer on an existing operand, never a value on
+        // its own), so this initializer item -- and so the whole
+        // statement -- is left untouched.
+        let line = "var x=new Dictionary<string,int>{[\"a\"]=1};";
+        assert_eq!(fmt(line), line);
     }
 
     // --- indexers --------------------------------------------------------

@@ -6,14 +6,12 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Object creation
 
-- **Multi-dimensional array creation with explicit sizes** (`new
-  int[2, 3]`) — only a single bracketed size expression is parsed
-  (`new Type[size]`); the no-size forms (`new Type[,] { .. }`) support
-  any rank via a nested `{ .. }` initializer instead.
-- **Object/collection initializers** (`new Foo { X = 1 }`, `new Foo()
-  { X = 1 }`) — `expr.rs`'s `new` case only recognizes array creation
-  brackets before a `{ .. }` initializer, not a bare type name or a
-  constructor argument list.
+- **Indexed collection initializers** (`new Dictionary<string, int>
+  { ["a"] = 1 }`) — each initializer item is parsed as a full
+  expression (`parse_assignment`), and `["a"]` isn't a valid primary
+  expression on its own (`[` only starts an indexer on an existing
+  operand); an item using this form leaves the whole statement
+  untouched.
 
 ## Types & declarations
 
