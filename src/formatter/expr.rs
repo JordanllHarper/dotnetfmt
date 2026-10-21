@@ -4,6 +4,7 @@
 //! Scope is intentionally limited to "basic" C#: literals, identifiers,
 //! member access, calls, indexers, `new Type(...)`/`new(...)` object
 //! creation (with an optional trailing object/collection initializer,
+//! whose items may themselves be indexed entries -- `["a"] = 1` --
 //! or -- for a named type -- a bare `new Foo { .. }` with no argument
 //! list at all), array creation (`new Type[size, ...]` for any rank,
 //! `new Type[] { .. }`, `new[] { .. }`, and bare `{ .. }`
@@ -54,8 +55,10 @@ pub enum Expr {
     /// the source as written rather than normalizing one to the
     /// other. Each initializer item is parsed as a full expression, so
     /// a member initializer (`X = 1`) is just `Expr::Assign` and a
-    /// collection item (`1`) is a plain expression -- no dedicated
-    /// initializer-item node is needed.
+    /// collection item (`1`) is a plain expression; an indexed
+    /// collection initializer entry (`["a"] = 1`) is the one shape
+    /// that isn't a plain expression on its own, so it gets its own
+    /// `IndexedInitializerEntry` node.
     New(Option<String>, Option<Vec<Expr>>, Option<Vec<Expr>>),
     /// Array creation: `new Type[size, ...]` (one size expression per
     /// dimension), `new Type[] { ... }`, or `new[] { ... }`.
@@ -71,6 +74,13 @@ pub enum Expr {
     /// nested inside another initializer for jagged/multi-dimensional
     /// arrays (`new int[,] { { 1, 2 }, { 3, 4 } }`).
     ArrayInitializer(Vec<Expr>),
+    /// An indexed collection initializer entry: `[key, ...] = value`
+    /// (e.g. `new Dictionary<string, int> { ["a"] = 1 }`). Kept
+    /// distinct from `Index` since there's no target expression --
+    /// the bracketed key list is initializer syntax standing alone,
+    /// not an indexer applied to an operand, so it isn't reachable
+    /// from `parse_primary`/`parse_postfix` at all.
+    IndexedInitializerEntry(Vec<Expr>, Box<Expr>),
     Unary(&'static str, Box<Expr>),
     /// Postfix `++`/`--`, e.g. `i++`. Kept distinct from `Unary`
     /// (prefix) since the operator renders after the operand and, per
@@ -150,6 +160,10 @@ pub fn render(expr: &Expr) -> String {
             format!("new{type_part}{brackets}{init_part}")
         }
         Expr::ArrayInitializer(elements) => render_initializer(elements),
+        Expr::IndexedInitializerEntry(keys, value) => {
+            let keys = keys.iter().map(render).collect::<Vec<_>>().join(", ");
+            format!("[{keys}] = {}", render(value))
+        }
         Expr::Unary(op, operand) => format!("{op}{}", render(operand)),
         Expr::PostfixUnary(op, operand) => format!("{}{op}", render(operand)),
         Expr::Binary(op, left, right) => format!("{} {op} {}", render(left), render(right)),
@@ -561,7 +575,48 @@ fn parse_array_initializer(c: &mut Cursor) -> Option<Vec<Expr>> {
     if !matches!(c.next()?, Token::Symbol('{')) {
         return None;
     }
-    parse_arg_list(c, '}')
+    parse_initializer_items(c, '}')
+}
+
+/// Parses a comma-separated initializer item list delimited by
+/// `close`, mirroring `parse_arg_list` but recognizing the indexed
+/// collection initializer entry form (`[key, ...] = value`) that
+/// `parse_assignment` can't produce on its own, since a bare `[..]`
+/// isn't a valid primary expression anywhere else in the grammar. The
+/// opening delimiter must already be consumed by the caller.
+fn parse_initializer_items(c: &mut Cursor, close: char) -> Option<Vec<Expr>> {
+    let mut items = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol(s)) if s == close) {
+        loop {
+            items.push(parse_initializer_item(c)?);
+            match c.peek() {
+                Some(Token::Symbol(',')) => {
+                    c.next();
+                }
+                _ => break,
+            }
+        }
+    }
+    match c.next()? {
+        Token::Symbol(s) if s == close => Some(items),
+        _ => None,
+    }
+}
+
+/// A single initializer item: either an indexed collection
+/// initializer entry (`[key, ...] = value`) or a plain expression
+/// (a member initializer `X = 1`, or a collection item `1`).
+fn parse_initializer_item(c: &mut Cursor) -> Option<Expr> {
+    if matches!(c.peek(), Some(Token::Symbol('['))) {
+        c.next();
+        let keys = parse_arg_list(c, ']')?;
+        if !matches!(c.next()?, Token::Symbol('=')) {
+            return None;
+        }
+        let value = parse_assignment(c)?;
+        return Some(Expr::IndexedInitializerEntry(keys, Box::new(value)));
+    }
+    parse_assignment(c)
 }
 
 /// Parses a `switch` expression's `{ pattern => result, ... }` arm
