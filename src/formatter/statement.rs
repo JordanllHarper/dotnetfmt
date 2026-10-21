@@ -54,15 +54,13 @@ pub(super) fn parse_type(c: &mut Cursor) -> Option<String> {
         }
         let checkpoint = c.save();
         c.next();
-        match c.peek().and_then(as_ident) {
-            Some(name) => {
-                rendered = format!("{rendered}.{name}");
-                c.next();
-            }
-            None => {
-                c.restore(checkpoint);
-                break;
-            }
+        let name = c.peek().and_then(as_ident);
+        if let Some(name) = name {
+            rendered = format!("{rendered}.{name}");
+            c.next();
+        } else {
+            c.restore(checkpoint);
+            break;
         }
     }
 
