@@ -26,9 +26,11 @@ const MODIFIERS: &[&str] = &[
     "readonly",
 ];
 
-/// Parses a type reference: a base identifier, an optional generic
-/// argument list (`<T, U>`), and optional trailing array rank
-/// specifiers (`[]`, `[,]`, ...). Renders it back in canonical form.
+/// Parses a type reference: a base identifier (optionally
+/// dot-qualified, e.g. `System.Collections.Generic.List`), an
+/// optional generic argument list (`<T, U>`) on the final segment,
+/// and optional trailing array rank specifiers (`[]`, `[,]`, ...).
+/// Renders it back in canonical form.
 ///
 /// This only handles "type position" parsing (called where the
 /// grammar already expects a type), so treating `<` as opening
@@ -39,6 +41,30 @@ const MODIFIERS: &[&str] = &[
 /// opener in the type position right after `new`).
 pub(super) fn parse_type(c: &mut Cursor) -> Option<String> {
     let mut rendered = as_ident(c.next()?)?.to_string();
+
+    // Dot-qualified segments (`Namespace.Sub.Type`) -- only a plain
+    // chain of identifiers, generics/array rank apply once at the end
+    // (`Namespace.Generic<T>.Nested` isn't supported). A `.` not
+    // followed by an identifier is left unconsumed rather than
+    // guessed at; the type parsed so far is still returned, so the
+    // caller sees the dot as a leftover token and fails as usual.
+    loop {
+        if !matches!(c.peek(), Some(Token::Symbol('.'))) {
+            break;
+        }
+        let checkpoint = c.save();
+        c.next();
+        match c.peek().and_then(as_ident) {
+            Some(name) => {
+                rendered = format!("{rendered}.{name}");
+                c.next();
+            }
+            None => {
+                c.restore(checkpoint);
+                break;
+            }
+        }
+    }
 
     if matches!(c.peek(), Some(Token::Symbol('<'))) {
         c.next();
