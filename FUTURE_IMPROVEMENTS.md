@@ -4,13 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## Types & declarations
-
-- **The `global::` alias qualifier** (`global::System.String`) — `::`
-  lexes as two separate `:` symbols (there's no `::` operator), so
-  `parse_type` parses `global` as a type on its own and trips on the
-  `:` that follows; a type using this qualifier is left untouched.
-
 ## Control flow
 
 - **Property and list patterns** (`case { Prop: value }:`, `case [1,

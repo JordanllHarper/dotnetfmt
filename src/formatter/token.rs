@@ -39,7 +39,7 @@ pub enum Token<'a> {
 // since that only happens in expression context, never while parsing
 // a type's generic argument list.
 const MULTI_CHAR_OPS: &[&str] = &[
-    "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "++", "--", "=>", "??",
+    "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "++", "--", "=>", "??", "::",
 ];
 
 fn is_ident_start(c: char) -> bool {
