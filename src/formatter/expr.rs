@@ -26,7 +26,7 @@
 //! implied by the source, this is sufficient to round-trip spacing
 //! without any risk of changing what the expression means.
 
-use crate::formatter::token::{Cursor, Token};
+use crate::formatter::token::{Cursor, Token, as_ident};
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -668,15 +668,21 @@ pub(super) fn parse_switch_arm(c: &mut Cursor) -> Option<(String, Expr)> {
 /// `and`.
 const PATTERN_KEYWORDS: &[&str] = &["when", "and", "or", "not"];
 
-/// Parses a single relational/type/expression pattern, or a
-/// parenthesized sub-pattern -- the base case of the pattern grammar,
-/// with no `and`/`or`/`not`/`when` of its own. Recognizes, in order:
+/// Parses a single relational/type/property/list/expression pattern,
+/// or a parenthesized sub-pattern -- the base case of the pattern
+/// grammar, with no `and`/`or`/`not`/`when` of its own. Recognizes, in
+/// order:
 ///
 ///   - a **parenthesized pattern** (`(int i and > 0)`), grouping any
 ///     `or`-combined sub-pattern so it can be combined further by the
 ///     caller (e.g. `(int i and > 0) or < -10`);
 ///   - a **relational pattern** (`> 5`, `<= 0`): a bare relational
 ///     operator followed by a constant expression;
+///   - a **property pattern** (`{ X: 0 }`, `Point { X: 0, Y: 0 }`) or
+///     **list pattern** (`[1, 2]`, `int[] [.. var rest]`), each with
+///     an optional leading type and optional trailing binding
+///     designation (see [`parse_property_pattern_clause`],
+///     [`parse_list_pattern_clause`], [`parse_pattern_designation`]);
 ///   - a **type pattern** (`int i`, `List<int> items`): a type
 ///     (reusing [`super::statement::parse_type`]) immediately followed
 ///     by a binding identifier (or `_` discard) -- tried with
@@ -706,12 +712,40 @@ pub(super) fn parse_primary_pattern(c: &mut Cursor) -> Option<String> {
         return Some(format!("{op} {}", render(&parse_expression(c)?)));
     }
 
+    if matches!(c.peek(), Some(Token::Symbol('{'))) {
+        c.next();
+        let clause = parse_property_pattern_clause(c)?;
+        return Some(parse_pattern_designation(c, clause));
+    }
+
+    if matches!(c.peek(), Some(Token::Symbol('['))) {
+        c.next();
+        let clause = parse_list_pattern_clause(c)?;
+        return Some(parse_pattern_designation(c, clause));
+    }
+
     let checkpoint = c.save();
     let type_pattern = super::statement::parse_type(c).and_then(|type_name| match c.peek() {
         Some(Token::Ident(name)) if !PATTERN_KEYWORDS.contains(&name) => {
             let name = name.to_string();
             c.next();
             Some(format!("{type_name} {name}"))
+        }
+        Some(Token::Symbol('{')) => {
+            c.next();
+            let clause = parse_property_pattern_clause(c)?;
+            Some(parse_pattern_designation(
+                c,
+                format!("{type_name} {clause}"),
+            ))
+        }
+        Some(Token::Symbol('[')) => {
+            c.next();
+            let clause = parse_list_pattern_clause(c)?;
+            Some(parse_pattern_designation(
+                c,
+                format!("{type_name} {clause}"),
+            ))
         }
         _ => None,
     });
@@ -722,6 +756,90 @@ pub(super) fn parse_primary_pattern(c: &mut Cursor) -> Option<String> {
             c.restore(checkpoint);
             Some(render(&parse_expression(c)?))
         }
+    }
+}
+
+/// Parses a property pattern's `{ Prop: pattern, ... }` subpattern
+/// list, possibly empty (`{ }`), with the opening `{` already
+/// consumed. Each subpattern's left side is a dot-qualified path (an
+/// "extended property pattern", e.g. `{ Address.City: "x" }`) rather
+/// than a single identifier, and its right side is itself a full
+/// `and`/`or`/`not`-combinable pattern (e.g. `{ Age: > 0 }`).
+fn parse_property_pattern_clause(c: &mut Cursor) -> Option<String> {
+    let mut subpatterns = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol('}'))) {
+        loop {
+            let mut path = as_ident(c.next()?)?.to_string();
+            while matches!(c.peek(), Some(Token::Symbol('.'))) {
+                c.next();
+                let name = as_ident(c.next()?)?;
+                path = format!("{path}.{name}");
+            }
+            if !matches!(c.next()?, Token::Symbol(':')) {
+                return None;
+            }
+            let value = parse_or_pattern(c)?;
+            subpatterns.push(format!("{path}: {value}"));
+            if let Some(Token::Symbol(',')) = c.peek() {
+                c.next();
+            } else {
+                break;
+            }
+        }
+    }
+    if !matches!(c.next()?, Token::Symbol('}')) {
+        return None;
+    }
+    if subpatterns.is_empty() {
+        return Some("{ }".to_string());
+    }
+    Some(format!("{{ {} }}", subpatterns.join(", ")))
+}
+
+/// Parses a list pattern's `[pattern, ...]` element list, possibly
+/// empty (`[]`), with the opening `[` already consumed. An element may
+/// be a slice pattern (`..`), optionally binding the slice via a
+/// trailing subpattern (`.. var rest`); any other element is itself a
+/// full `and`/`or`/`not`-combinable pattern.
+fn parse_list_pattern_clause(c: &mut Cursor) -> Option<String> {
+    let mut elements = Vec::new();
+    if !matches!(c.peek(), Some(Token::Symbol(']'))) {
+        loop {
+            if matches!(c.peek(), Some(Token::Symbol('.'))) {
+                c.next();
+                if !matches!(c.next()?, Token::Symbol('.')) {
+                    return None;
+                }
+                if matches!(c.peek(), Some(Token::Symbol(',' | ']'))) {
+                    elements.push("..".to_string());
+                } else {
+                    elements.push(format!(".. {}", parse_or_pattern(c)?));
+                }
+            } else {
+                elements.push(parse_or_pattern(c)?);
+            }
+            if let Some(Token::Symbol(',')) = c.peek() {
+                c.next();
+            } else {
+                break;
+            }
+        }
+    }
+    if !matches!(c.next()?, Token::Symbol(']')) {
+        return None;
+    }
+    Some(format!("[{}]", elements.join(", ")))
+}
+
+/// Appends a property/list pattern's optional trailing binding
+/// designation (`{ X: 0 } p`, `[1, 2] rest`), if one follows.
+fn parse_pattern_designation(c: &mut Cursor, pattern: String) -> String {
+    match c.peek() {
+        Some(Token::Ident(name)) if !PATTERN_KEYWORDS.contains(&name) => {
+            c.next();
+            format!("{pattern} {name}")
+        }
+        _ => pattern,
     }
 }
 

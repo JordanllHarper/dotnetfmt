@@ -4,15 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## Control flow
-
-- **Property and list patterns** (`case { Prop: value }:`, `case [1,
-  2, ..]:`) — `parse_primary_pattern` only recognizes relational,
-  type, and expression patterns (plus `and`/`or`/`not`/`when`
-  combinators and parenthesized grouping); property and list pattern
-  syntax isn't part of the grammar, so a `case`/arm using one is left
-  untouched.
-
 ## Formatting / layout
 
 - **Multiple braces per source line** (`if (x) { y(); }`,
