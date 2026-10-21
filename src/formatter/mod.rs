@@ -888,13 +888,27 @@ mod tests {
     }
 
     #[test]
-    fn generic_method_type_parameter_constraint_is_not_recognized() {
-        // The `where` clause after the parameter list isn't part of
-        // the grammar yet; the leftover tokens mean the whole
-        // signature is left untouched rather than dropping the
-        // constraint.
-        let line = "T Foo<T>(T x) where T : class";
-        assert_eq!(fmt(line), line);
+    fn generic_method_type_parameter_constraint_is_formatted() {
+        assert_eq!(
+            fmt("T   Foo<T>(T x)where T:class"),
+            "T Foo<T>(T x) where T : class"
+        );
+    }
+
+    #[test]
+    fn generic_method_with_multiple_constraints_is_formatted() {
+        assert_eq!(
+            fmt("T Foo<T>(T x) where T : IDisposable, new()"),
+            "T Foo<T>(T x) where T : IDisposable, new()"
+        );
+    }
+
+    #[test]
+    fn generic_method_with_multiple_where_clauses_is_formatted() {
+        assert_eq!(
+            fmt("void Foo<T,U>(T x,U y) where T : class where U : struct"),
+            "void Foo<T, U>(T x, U y) where T : class where U : struct"
+        );
     }
 
     // --- class declarations ------------------------------------------
@@ -923,6 +937,22 @@ mod tests {
     #[test]
     fn generic_class_declaration_is_formatted() {
         assert_eq!(fmt("class Foo<T>"), "class Foo<T>");
+    }
+
+    #[test]
+    fn generic_class_declaration_with_constraint_is_formatted() {
+        assert_eq!(
+            fmt("class   Foo<T>where T:class"),
+            "class Foo<T> where T : class"
+        );
+    }
+
+    #[test]
+    fn generic_class_declaration_with_base_list_and_constraint_is_formatted() {
+        assert_eq!(
+            fmt("public class Foo<T>:IBaz where T : struct"),
+            "public class Foo<T> : IBaz where T : struct"
+        );
     }
 
     // --- if statements --------------------------------------------------

@@ -20,14 +20,6 @@ they're easy to pick up later instead of being rediscovered.
   `parse_type` parses `global` as a type on its own and trips on the
   `:` that follows; a type using this qualifier is left untouched.
 
-## Methods & functions
-
-- **Generic type parameter constraints** (`T Foo<T>(T x) where T :
-  class`) — `try_format_method_signature` parses the `<T, ...>` list
-  itself but not a trailing `where` clause; the leftover tokens mean
-  the whole signature is left untouched rather than dropping the
-  constraint.
-
 ## Control flow
 
 - **Property and list patterns** (`case { Prop: value }:`, `case [1,
