@@ -1068,6 +1068,28 @@ mod tests {
     }
 
     #[test]
+    fn foreach_with_tuple_deconstruction_is_formatted() {
+        assert_eq!(
+            fmt("foreach(var   (k,v)   in   dict)"),
+            "foreach (var (k, v) in dict)"
+        );
+    }
+
+    #[test]
+    fn foreach_with_two_element_tuple_deconstruction_and_trailing_brace_is_formatted() {
+        assert_eq!(
+            fmt("foreach (var (name, age) in people){"),
+            "foreach (var (name, age) in people) {"
+        );
+    }
+
+    #[test]
+    fn malformed_foreach_tuple_deconstruction_is_left_alone() {
+        let line = "foreach (var (k, v items)";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
     fn foreach_loop_is_reindented_and_reformatted() {
         let input = concat!(
             "void Foo()\r\n",
@@ -1134,6 +1156,19 @@ mod tests {
     #[test]
     fn for_statement_with_empty_increment_is_formatted() {
         assert_eq!(fmt("for(int i=0;i<10;)"), "for (int i = 0; i < 10; )");
+    }
+
+    #[test]
+    fn for_statement_with_untyped_assignment_init_is_formatted() {
+        assert_eq!(fmt("for(i=0;i<10;i++)"), "for (i = 0; i < 10; i++)");
+    }
+
+    #[test]
+    fn for_statement_with_multiple_untyped_init_expressions_is_formatted() {
+        assert_eq!(
+            fmt("for(i=0,j=10;i<j;i++,j--)"),
+            "for (i = 0, j = 10; i < j; i++, j--)"
+        );
     }
 
     #[test]
