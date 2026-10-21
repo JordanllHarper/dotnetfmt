@@ -301,6 +301,47 @@ mod tests {
     }
 
     #[test]
+    fn formats_bitwise_operators() {
+        assert_eq!(fmt("var x=a&b;"), "var x = a & b;");
+        assert_eq!(fmt("var x=a^b;"), "var x = a ^ b;");
+        assert_eq!(fmt("var x=a|b;"), "var x = a | b;");
+    }
+
+    #[test]
+    fn formats_shift_operators() {
+        assert_eq!(fmt("var x=a<<2;"), "var x = a << 2;");
+        assert_eq!(fmt("var x=a>>2;"), "var x = a >> 2;");
+    }
+
+    #[test]
+    fn shift_binds_tighter_than_relational() {
+        assert_eq!(fmt("var x=a<<b<c;"), "var x = a << b < c;");
+    }
+
+    #[test]
+    fn nested_generic_closing_brackets_still_parse() {
+        assert_eq!(
+            fmt("List<List<int>> x=new List<List<int>>();"),
+            "List<List<int>> x = new List<List<int>>();"
+        );
+    }
+
+    #[test]
+    fn formats_null_coalescing_operator() {
+        assert_eq!(fmt("var x=a??b;"), "var x = a ?? b;");
+    }
+
+    #[test]
+    fn nested_null_coalescing_is_right_associative() {
+        assert_eq!(fmt("var x=a??b??c;"), "var x = a ?? b ?? c;");
+    }
+
+    #[test]
+    fn null_coalescing_binds_looser_than_logical_or_and_tighter_than_ternary() {
+        assert_eq!(fmt("var x=a||b??c?d:e;"), "var x = a || b ?? c ? d : e;");
+    }
+
+    #[test]
     fn formats_unary_not_and_minus() {
         assert_eq!(fmt("var x=!a;"), "var x = !a;");
         assert_eq!(fmt("var x=-a;"), "var x = -a;");

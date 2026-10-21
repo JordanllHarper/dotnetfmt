@@ -5,12 +5,13 @@
 //! member access, calls, indexers, `new Type(...)`/`new(...)` object
 //! creation, array creation (`new Type[size]`, `new Type[] { .. }`,
 //! `new[] { .. }`, and bare `{ .. }` initializers), unary
-//! `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic, relational,
-//! equality, `&&`/`||`, assignment (including compound assignment),
-//! and the `?:` conditional (ternary) operator. Anything outside that
-//! (object/collection initializers, lambdas, string interpolation,
-//! ...) simply fails to parse, and the caller falls back to leaving
-//! the source untouched.
+//! `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic, shift
+//! (`<<`/`>>`), relational, equality, bitwise `&`/`^`/`|`, `&&`/`||`,
+//! null coalescing (`??`), assignment (including compound
+//! assignment), and the `?:` conditional (ternary) operator. Anything
+//! outside that (object/collection initializers, lambdas, string
+//! interpolation, ...) simply fails to parse, and the caller falls
+//! back to leaving the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -149,7 +150,7 @@ fn parse_assignment(c: &mut Cursor) -> Option<Expr> {
 /// assignment precedence so both nested ternaries and assignments
 /// (`a ? b : c = d`) are allowed inside them, matching C#'s grammar.
 fn parse_ternary(c: &mut Cursor) -> Option<Expr> {
-    let cond = parse_logical_or(c)?;
+    let cond = parse_null_coalescing(c)?;
     if !matches!(c.peek(), Some(Token::Symbol('?'))) {
         return Some(cond);
     }
@@ -160,6 +161,18 @@ fn parse_ternary(c: &mut Cursor) -> Option<Expr> {
     }
     let when_false = parse_assignment(c)?;
     Some(Expr::Ternary(Box::new(cond), Box::new(when_true), Box::new(when_false)))
+}
+
+/// `a ?? b`, right-associative (so `a ?? b ?? c` parses as `a ?? (b ??
+/// c)`), binding tighter than `?:` but looser than `||`.
+fn parse_null_coalescing(c: &mut Cursor) -> Option<Expr> {
+    let left = parse_logical_or(c)?;
+    if !matches!(c.peek(), Some(Token::Op("??"))) {
+        return Some(left);
+    }
+    c.next();
+    let right = parse_null_coalescing(c)?;
+    Some(Expr::Binary("??", Box::new(left), Box::new(right)))
 }
 
 fn parse_logical_or(c: &mut Cursor) -> Option<Expr> {
@@ -173,11 +186,41 @@ fn parse_logical_or(c: &mut Cursor) -> Option<Expr> {
 }
 
 fn parse_logical_and(c: &mut Cursor) -> Option<Expr> {
-    let mut left = parse_equality(c)?;
+    let mut left = parse_bitwise_or(c)?;
     while matches!(c.peek(), Some(Token::Op("&&"))) {
         c.next();
-        let right = parse_equality(c)?;
+        let right = parse_bitwise_or(c)?;
         left = Expr::Binary("&&", Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+fn parse_bitwise_or(c: &mut Cursor) -> Option<Expr> {
+    let mut left = parse_bitwise_xor(c)?;
+    while matches!(c.peek(), Some(Token::Symbol('|'))) {
+        c.next();
+        let right = parse_bitwise_xor(c)?;
+        left = Expr::Binary("|", Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+fn parse_bitwise_xor(c: &mut Cursor) -> Option<Expr> {
+    let mut left = parse_bitwise_and(c)?;
+    while matches!(c.peek(), Some(Token::Symbol('^'))) {
+        c.next();
+        let right = parse_bitwise_and(c)?;
+        left = Expr::Binary("^", Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+fn parse_bitwise_and(c: &mut Cursor) -> Option<Expr> {
+    let mut left = parse_equality(c)?;
+    while matches!(c.peek(), Some(Token::Symbol('&'))) {
+        c.next();
+        let right = parse_equality(c)?;
+        left = Expr::Binary("&", Box::new(left), Box::new(right));
     }
     Some(left)
 }
@@ -193,7 +236,7 @@ fn parse_equality(c: &mut Cursor) -> Option<Expr> {
 }
 
 fn parse_relational(c: &mut Cursor) -> Option<Expr> {
-    let mut left = parse_additive(c)?;
+    let mut left = parse_shift(c)?;
     loop {
         let op = match c.peek() {
             Some(Token::Op(op @ ("<=" | ">="))) => op,
@@ -202,6 +245,31 @@ fn parse_relational(c: &mut Cursor) -> Option<Expr> {
             _ => break,
         };
         c.next();
+        let right = parse_shift(c)?;
+        left = Expr::Binary(op, Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+/// `<<`/`>>`. The lexer never merges these into a single token (see
+/// the comment on `MULTI_CHAR_OPS` in `token.rs`), so each is
+/// recognized here as two adjacent, identical `<`/`>` `Symbol`s; a
+/// lone `<`/`>` (relational) is left in place -- via `restore` -- for
+/// `parse_relational` to pick up.
+fn parse_shift(c: &mut Cursor) -> Option<Expr> {
+    let mut left = parse_additive(c)?;
+    loop {
+        let checkpoint = c.save();
+        let Some(Token::Symbol(first @ ('<' | '>'))) = c.peek() else {
+            break;
+        };
+        c.next();
+        if !matches!(c.peek(), Some(Token::Symbol(s)) if s == first) {
+            c.restore(checkpoint);
+            break;
+        }
+        c.next();
+        let op = if first == '<' { "<<" } else { ">>" };
         let right = parse_additive(c)?;
         left = Expr::Binary(op, Box::new(left), Box::new(right));
     }

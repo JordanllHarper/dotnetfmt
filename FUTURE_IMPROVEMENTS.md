@@ -4,11 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## Expressions
-
-- **Bitwise/shift operators** (`&`, `|`, `^`, `<<`, `>>`) and **null
-  coalescing** (`??`) — not in the expression grammar.
-
 ## String interpolation
 
 `$"{x}"` currently tokenizes as a bare `$` symbol followed by an
