@@ -1541,6 +1541,102 @@ mod tests {
         assert_eq!(fmt(line), line);
     }
 
+    // --- property and list patterns ----------------------------------
+
+    #[test]
+    fn case_label_with_empty_property_pattern_is_formatted() {
+        assert_eq!(fmt("case   {   }  :"), "case { }:");
+    }
+
+    #[test]
+    fn case_label_with_property_pattern_is_formatted() {
+        assert_eq!(fmt("case   {   Length:0  }  :"), "case { Length: 0 }:");
+    }
+
+    #[test]
+    fn case_label_with_typed_property_pattern_is_formatted() {
+        assert_eq!(fmt("case   Point{X:0,Y:0}:"), "case Point { X: 0, Y: 0 }:");
+    }
+
+    #[test]
+    fn case_label_with_extended_property_pattern_is_formatted() {
+        assert_eq!(
+            fmt("case   {   Address.City  :  \"X\" }:"),
+            "case { Address.City: \"X\" }:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_property_pattern_designation_is_formatted() {
+        assert_eq!(fmt("case   {   X:0  }   p  :"), "case { X: 0 } p:");
+    }
+
+    #[test]
+    fn case_label_with_nested_property_pattern_is_formatted() {
+        assert_eq!(
+            fmt("case   {   Location  :  { X:0, Y:0 }  }:"),
+            "case { Location: { X: 0, Y: 0 } }:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_combinator_inside_property_pattern_is_formatted() {
+        assert_eq!(
+            fmt("case   {   Age  :  >0   and   <100  }:"),
+            "case { Age: > 0 and < 100 }:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_empty_list_pattern_is_formatted() {
+        assert_eq!(fmt("case   [   ]  :"), "case []:");
+    }
+
+    #[test]
+    fn case_label_with_list_pattern_is_formatted() {
+        assert_eq!(fmt("case   [1,2,3]  :"), "case [1, 2, 3]:");
+    }
+
+    #[test]
+    fn case_label_with_slice_pattern_is_formatted() {
+        assert_eq!(fmt("case   [1,  ..  ,9]  :"), "case [1, .., 9]:");
+    }
+
+    #[test]
+    fn case_label_with_bound_slice_pattern_is_formatted() {
+        assert_eq!(
+            fmt("case   [1,  ..  var   rest  ,9]  :"),
+            "case [1, .. var rest, 9]:"
+        );
+    }
+
+    #[test]
+    fn case_label_with_typed_list_pattern_is_formatted() {
+        assert_eq!(fmt("case   List<int>[1,2]:"), "case List<int> [1, 2]:");
+    }
+
+    #[test]
+    fn case_label_with_list_pattern_designation_is_formatted() {
+        assert_eq!(fmt("case   [1,2]   rest  :"), "case [1, 2] rest:");
+    }
+
+    #[test]
+    fn case_label_with_nested_list_pattern_is_formatted() {
+        assert_eq!(fmt("case   [[1,2],[3,4]]:"), "case [[1, 2], [3, 4]]:");
+    }
+
+    #[test]
+    fn malformed_property_pattern_is_left_alone() {
+        let line = "case { X: }:";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
+    fn malformed_list_pattern_is_left_alone() {
+        let line = "case [1, . 2]:";
+        assert_eq!(fmt(line), line);
+    }
+
     #[test]
     fn switch_statement_is_reindented_and_reformatted() {
         let input = concat!(
