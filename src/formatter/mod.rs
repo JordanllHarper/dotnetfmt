@@ -565,6 +565,71 @@ mod tests {
     }
 
     #[test]
+    fn qualified_type_declaration_is_formatted() {
+        assert_eq!(
+            fmt("System.Text.StringBuilder   sb;"),
+            "System.Text.StringBuilder sb;"
+        );
+    }
+
+    #[test]
+    fn qualified_generic_type_declaration_is_formatted() {
+        assert_eq!(
+            fmt("System.Collections.Generic.List<int>   list=someFunction();"),
+            "System.Collections.Generic.List<int> list = someFunction();"
+        );
+    }
+
+    #[test]
+    fn qualified_type_as_generic_argument_is_formatted() {
+        assert_eq!(
+            fmt("List<System.String>   names;"),
+            "List<System.String> names;"
+        );
+    }
+
+    #[test]
+    fn qualified_type_in_new_expression_is_formatted() {
+        assert_eq!(
+            fmt("var sb=new   System.Text.StringBuilder();"),
+            "var sb = new System.Text.StringBuilder();"
+        );
+    }
+
+    #[test]
+    fn qualified_return_type_is_formatted() {
+        assert_eq!(fmt("System.String   Foo()"), "System.String Foo()");
+    }
+
+    #[test]
+    fn qualified_foreach_element_type_is_formatted() {
+        assert_eq!(
+            fmt("foreach(System.String   s   in   items)"),
+            "foreach (System.String s in items)"
+        );
+    }
+
+    #[test]
+    fn global_alias_qualifier_is_not_recognized() {
+        // `::` lexes as two separate `:` symbols (no `::` operator),
+        // so `global` parses as a type on its own and the following
+        // `:` isn't anything parse_type or the declarator check
+        // expects; the whole line is left untouched.
+        let line = "global::System.String s;";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
+    fn trailing_dot_in_type_position_is_left_alone() {
+        // A `.` not followed by an identifier isn't guessed at; every
+        // statement shape that could still make sense of the leftover
+        // dot fails too, so the whole (malformed) line is left
+        // untouched rather than mangled.
+        let line = "System.Collections.;";
+        assert_eq!(fmt(line), line);
+    }
+
+    #[test]
     fn custom_type_declaration_is_formatted() {
         assert_eq!(fmt("Customer    c;"), "Customer c;");
     }
@@ -1305,6 +1370,13 @@ mod tests {
     #[test]
     fn case_label_with_type_pattern_is_formatted() {
         assert_eq!(fmt("case   int   i:"), "case int i:");
+    }
+
+    #[test]
+    fn case_label_with_qualified_type_pattern_is_formatted() {
+        // Emerges for free from parse_type's qualified-name support --
+        // `parse_primary_pattern`'s type pattern reuses parse_type.
+        assert_eq!(fmt("case System.String   s:"), "case System.String s:");
     }
 
     #[test]

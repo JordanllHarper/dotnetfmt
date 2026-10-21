@@ -15,9 +15,10 @@ they're easy to pick up later instead of being rediscovered.
 
 ## Types & declarations
 
-- **Qualified/dotted type names** (`System.Collections.Generic.List<int>`)
-  in type position — `parse_type` only accepts a single identifier
-  base name.
+- **The `global::` alias qualifier** (`global::System.String`) — `::`
+  lexes as two separate `:` symbols (there's no `::` operator), so
+  `parse_type` parses `global` as a type on its own and trips on the
+  `:` that follows; a type using this qualifier is left untouched.
 
 ## Methods & functions
 
