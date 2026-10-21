@@ -4,46 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## String interpolation
-
-`$"{x}"` currently tokenizes as a bare `$` symbol followed by an
-ordinary string; the interpolation holes aren't parsed as expressions
-at all. Pieces needed, to be tackled step by step:
-
-- **Tokenizing `$"..."` as a single token.** Recognize the `$` prefix
-  and lex the whole interpolated string (quotes, literal text, and
-  `{...}` holes) as one token, so it round-trips safely wherever it
-  appears instead of splitting into a stray `$` symbol plus an
-  ordinary string.
-- **Escaped braces** (`{{`, `}}`) — these render as literal `{`/`}`
-  and must not be mistaken for the start/end of a hole.
-- **Hole boundary scanning with nested depth tracking.** A hole can
-  contain nested `(`/`[`/`{` (calls, indexers, object/collection
-  initializers), so finding its matching closing `}` means tracking
-  bracket depth, not just scanning to the next `}`.
-- **Nested string/char literals inside a hole** (e.g. `{x ?? "none"}`)
-  — quote characters inside a hole must not be mistaken for the end
-  of the interpolated string itself.
-- **Reformatting each hole's expression.** Re-tokenize and re-parse
-  the hole's expression text through the existing
-  `tokenize`/`parse_expression`/`render` pipeline and splice the
-  reformatted result back in; literal text segments between holes are
-  left untouched.
-- **Alignment/format specifiers** (`{expr,width}`, `{expr:format}`,
-  `{expr,width:format}`) — only the expression part (up to the first
-  top-level `,` or `:`) gets reformatted; the alignment/format text
-  itself is preserved verbatim.
-- **The verbatim form** (`$@"..."` / `@$"..."`) — uses `""` for a
-  literal quote instead of backslash escapes, but holes work the same
-  way.
-- **Per-hole fallback.** If one hole's expression doesn't parse (e.g.
-  it uses a construct outside this formatter's expression grammar),
-  that hole's text is left untouched rather than failing the whole
-  string or the whole line.
-- Not planned: nested interpolated strings inside a hole
-  (`$"{$"{x}"}"`) — rare enough to stay out of scope; such a hole
-  simply won't reformat (falls under the per-hole fallback above).
-
 ## Object creation
 
 - **Multi-dimensional array creation with explicit sizes** (`new

@@ -9,6 +9,7 @@
 //! (see [`statement`]) is left textually as-is, only reindented.
 
 mod expr;
+mod interpolated;
 mod statement;
 mod token;
 
@@ -413,6 +414,118 @@ mod tests {
     fn float_literal_suffixes_are_preserved() {
         assert_eq!(fmt("double d=1.5;"), "double d = 1.5;");
         assert_eq!(fmt("var m=1.5m;"), "var m = 1.5m;");
+    }
+
+    // --- string interpolation ------------------------------------------------
+
+    #[test]
+    fn interpolated_string_without_holes_is_recognized() {
+        assert_eq!(fmt("var s=$\"hello world\";"), "var s = $\"hello world\";");
+    }
+
+    #[test]
+    fn interpolated_string_hole_is_reformatted() {
+        assert_eq!(
+            fmt("var s=$\"Hello {name+1}\";"),
+            "var s = $\"Hello {name + 1}\";"
+        );
+    }
+
+    #[test]
+    fn interpolated_string_multiple_holes_are_reformatted() {
+        assert_eq!(
+            fmt("var s=$\"{a+b} and {c*d}\";"),
+            "var s = $\"{a + b} and {c * d}\";"
+        );
+    }
+
+    #[test]
+    fn interpolated_string_escaped_braces_are_preserved() {
+        assert_eq!(fmt("var s=$\"{{literal}}\";"), "var s = $\"{{literal}}\";");
+    }
+
+    #[test]
+    fn interpolated_string_nested_call_args_are_not_mistaken_for_alignment() {
+        // The comma inside `Foo(a,b)` is nested inside parens, so it
+        // must not be mistaken for the hole's own alignment separator.
+        assert_eq!(fmt("var s=$\"{Foo(a,b)}\";"), "var s = $\"{Foo(a, b)}\";");
+    }
+
+    #[test]
+    fn interpolated_string_format_specifier_is_preserved() {
+        assert_eq!(
+            fmt("var s=$\"{value+1:N2}\";"),
+            "var s = $\"{value + 1:N2}\";"
+        );
+    }
+
+    #[test]
+    fn interpolated_string_alignment_is_preserved() {
+        assert_eq!(
+            fmt("var s=$\"{value+1,10}\";"),
+            "var s = $\"{value + 1,10}\";"
+        );
+    }
+
+    #[test]
+    fn interpolated_string_nested_string_literal_in_hole_is_preserved() {
+        assert_eq!(
+            fmt("var s=$\"{x??\"none\"}\";"),
+            "var s = $\"{x ?? \"none\"}\";"
+        );
+    }
+
+    #[test]
+    fn interpolated_string_unparseable_hole_falls_back() {
+        // Object initializers aren't part of the expression grammar;
+        // this hole is left untouched rather than failing the whole
+        // string.
+        assert_eq!(
+            fmt("var s=$\"{new Foo{X=1}}\";"),
+            "var s = $\"{new Foo{X=1}}\";"
+        );
+    }
+
+    #[test]
+    fn verbatim_interpolated_string_dollar_at_is_recognized() {
+        assert_eq!(
+            fmt("var s=$@\"C:\\{dir+1}\\path\";"),
+            "var s = $@\"C:\\{dir + 1}\\path\";"
+        );
+    }
+
+    #[test]
+    fn nested_interpolated_string_hole_is_reformatted_recursively() {
+        // A hole's own expression is reformatted through the same
+        // pipeline, so a nested interpolated string's holes are
+        // reformatted too -- an emergent property of the recursion,
+        // not special-cased.
+        assert_eq!(
+            fmt("var s=$\"outer {$\"inner {x+1}\"} end\";"),
+            "var s = $\"outer {$\"inner {x + 1}\"} end\";"
+        );
+    }
+
+    #[test]
+    fn unterminated_interpolated_string_is_left_untouched() {
+        // No closing quote, and so no terminating `;` either -- none
+        // of the statement-shape parsers recognize this, so (as with
+        // any other incomplete line) the whole line is left alone
+        // rather than guessed at.
+        assert_eq!(fmt("var s=$\"unterminated {x"), "var s=$\"unterminated {x");
+    }
+
+    #[test]
+    fn adjacent_holes_with_no_literal_text_between_are_reformatted() {
+        assert_eq!(fmt("var s=$\"{a}{b}{c}\";"), "var s = $\"{a}{b}{c}\";");
+    }
+
+    #[test]
+    fn verbatim_interpolated_string_at_dollar_is_recognized() {
+        assert_eq!(
+            fmt("var s=@$\"C:\\{dir+1}\\path\";"),
+            "var s = @$\"C:\\{dir + 1}\\path\";"
+        );
     }
 
     // --- variable declarations ---------------------------------------------

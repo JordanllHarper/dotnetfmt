@@ -8,10 +8,11 @@
 //! `!`/`-`/`+`/prefix and postfix `++`/`--`, arithmetic, shift
 //! (`<<`/`>>`), relational, equality, bitwise `&`/`^`/`|`, `&&`/`||`,
 //! null coalescing (`??`), assignment (including compound
-//! assignment), and the `?:` conditional (ternary) operator. Anything
-//! outside that (object/collection initializers, lambdas, string
-//! interpolation, ...) simply fails to parse, and the caller falls
-//! back to leaving the source untouched.
+//! assignment), the `?:` conditional (ternary) operator, and
+//! interpolated string literals (`$"..."`, holes reformatted
+//! recursively -- see `interpolated.rs`). Anything outside that
+//! (object/collection initializers, lambdas, ...) simply fails to
+//! parse, and the caller falls back to leaving the source untouched.
 //!
 //! Precedence is never inferred by the printer: every parenthesized
 //! subexpression in the input becomes an explicit `Paren` node that
@@ -24,8 +25,11 @@ use crate::formatter::token::{Cursor, Token};
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    /// A literal exactly as written in the source (number, string,
-    /// char, or the keywords `true`/`false`/`null`).
+    /// A literal as written in the source (number, string, char, or
+    /// the keywords `true`/`false`/`null`) -- except an interpolated
+    /// string's holes, which are reformatted (see
+    /// `interpolated.rs`); everything outside the holes is still
+    /// exactly as written.
     Literal(String),
     Ident(String),
     Paren(Box<Expr>),
@@ -113,7 +117,12 @@ pub fn render(expr: &Expr) -> String {
         Expr::Binary(op, left, right) => format!("{} {op} {}", render(left), render(right)),
         Expr::Assign(op, left, right) => format!("{} {op} {}", render(left), render(right)),
         Expr::Ternary(cond, when_true, when_false) => {
-            format!("{} ? {} : {}", render(cond), render(when_true), render(when_false))
+            format!(
+                "{} ? {} : {}",
+                render(cond),
+                render(when_true),
+                render(when_false)
+            )
         }
     }
 }
@@ -160,7 +169,11 @@ fn parse_ternary(c: &mut Cursor) -> Option<Expr> {
         return None;
     }
     let when_false = parse_assignment(c)?;
-    Some(Expr::Ternary(Box::new(cond), Box::new(when_true), Box::new(when_false)))
+    Some(Expr::Ternary(
+        Box::new(cond),
+        Box::new(when_true),
+        Box::new(when_false),
+    ))
 }
 
 /// `a ?? b`, right-associative (so `a ?? b ?? c` parses as `a ?? (b ??
@@ -381,6 +394,9 @@ fn parse_primary(c: &mut Cursor) -> Option<Expr> {
         Token::Int(s) | Token::Float(s) | Token::Str(s) | Token::Char(s) => {
             Some(Expr::Literal(s.to_string()))
         }
+        Token::InterpolatedStr(s) => Some(Expr::Literal(
+            super::interpolated::format_interpolated_string(s),
+        )),
         Token::Symbol('(') => {
             let inner = parse_assignment(c)?;
             match c.next()? {
@@ -423,9 +439,11 @@ fn parse_new(c: &mut Cursor) -> Option<Expr> {
         // brackets were already folded into `type_name` by
         // `parse_type`. A plain `new Foo { .. }` object initializer
         // (no brackets) falls through to `_ => None` instead.
-        Some(Token::Symbol('{')) if type_name.ends_with(']') => {
-            Some(Expr::ArrayCreation(Some(type_name), None, Some(parse_array_initializer(c)?)))
-        }
+        Some(Token::Symbol('{')) if type_name.ends_with(']') => Some(Expr::ArrayCreation(
+            Some(type_name),
+            None,
+            Some(parse_array_initializer(c)?),
+        )),
         _ => None,
     }
 }
@@ -438,7 +456,11 @@ fn parse_implicit_array_creation(c: &mut Cursor) -> Option<Expr> {
     if !matches!(c.next()?, Token::Symbol(']')) {
         return None;
     }
-    Some(Expr::ArrayCreation(None, None, Some(parse_array_initializer(c)?)))
+    Some(Expr::ArrayCreation(
+        None,
+        None,
+        Some(parse_array_initializer(c)?),
+    ))
 }
 
 /// `new Type[size]`, with an optional `{ .. }` initializer.
