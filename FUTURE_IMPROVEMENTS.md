@@ -4,15 +4,6 @@ Things intentionally left unsupported by the current formatter (they're
 left textually untouched rather than mis-formatted). Noted here so
 they're easy to pick up later instead of being rediscovered.
 
-## Object creation
-
-- **Indexed collection initializers** (`new Dictionary<string, int>
-  { ["a"] = 1 }`) — each initializer item is parsed as a full
-  expression (`parse_assignment`), and `["a"]` isn't a valid primary
-  expression on its own (`[` only starts an indexer on an existing
-  operand); an item using this form leaves the whole statement
-  untouched.
-
 ## Types & declarations
 
 - **The `global::` alias qualifier** (`global::System.String`) — `::`
