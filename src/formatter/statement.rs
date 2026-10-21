@@ -226,13 +226,15 @@ fn try_format_method_signature(tokens: &[Token]) -> Option<String> {
         .iter()
         .map(|m| format!("{m} "))
         .collect::<String>();
-    let return_type = match return_type {
-        Some(rt) => format!("{rt} "),
-        None => String::new(),
+    let return_type = if let Some(rt) = return_type {
+        format!("{rt} ")
+    } else {
+        String::new()
     };
-    let type_params = match type_params {
-        Some(params) => format!("<{}>", params.join(", ")),
-        None => String::new(),
+    let type_params = if let Some(params) = type_params {
+        format!("<{}>", params.join(", "))
+    } else {
+        String::new()
     };
     Some(format!(
         "{modifiers}{return_type}{name}{type_params}({})",
