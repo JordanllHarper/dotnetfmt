@@ -670,9 +670,44 @@ fn try_format_do_while_close(tokens: &[Token]) -> Option<String> {
     Some(format!("}} {tail}"))
 }
 
-/// Formats a `foreach` statement's header: `foreach (type name in
-/// collection)`. `tokens` must not include a trailing `{`, if the
-/// source had one -- the caller reattaches it.
+/// Parses a `foreach` loop's element binding: either a typed
+/// declaration (`int x`), or `var` with a parenthesized tuple
+/// deconstruction pattern (`var (k, v)`) -- a flat list of binding
+/// identifiers.
+fn parse_foreach_element(c: &mut Cursor) -> Option<String> {
+    let checkpoint = c.save();
+    if matches!(c.peek(), Some(Token::Ident("var"))) {
+        c.next();
+        if matches!(c.peek(), Some(Token::Symbol('('))) {
+            c.next();
+            let mut names = Vec::new();
+            loop {
+                names.push(as_ident(c.next()?)?.to_string());
+                if let Some(Token::Symbol(',')) = c.peek() {
+                    c.next();
+                } else {
+                    break;
+                }
+            }
+            return if matches!(c.next()?, Token::Symbol(')')) {
+                Some(format!("var ({})", names.join(", ")))
+            } else {
+                None
+            };
+        }
+        c.restore(checkpoint);
+    }
+
+    let element_type = parse_type(c)?;
+    let name = as_ident(c.next()?)?.to_string();
+    Some(format!("{element_type} {name}"))
+}
+
+/// Formats a `foreach` statement's header: `foreach (element in
+/// collection)`, where `element` is a typed binding or a `var (...)`
+/// tuple deconstruction (see [`parse_foreach_element`]). `tokens`
+/// must not include a trailing `{`, if the source had one -- the
+/// caller reattaches it.
 fn try_format_foreach_statement(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
 
@@ -684,8 +719,7 @@ fn try_format_foreach_statement(tokens: &[Token]) -> Option<String> {
         return None;
     }
 
-    let element_type = parse_type(&mut c)?;
-    let name = as_ident(c.next()?)?.to_string();
+    let element = parse_foreach_element(&mut c)?;
 
     if as_ident(c.next()?) != Some("in") {
         return None;
@@ -701,10 +735,7 @@ fn try_format_foreach_statement(tokens: &[Token]) -> Option<String> {
         return None;
     }
 
-    Some(format!(
-        "foreach ({element_type} {name} in {})",
-        render(&collection)
-    ))
+    Some(format!("foreach ({element} in {})", render(&collection)))
 }
 
 /// Splits a `for` header's inner tokens (everything after the
@@ -729,13 +760,34 @@ fn split_for_header<'a, 'b>(
     Some((init, condition, after_condition))
 }
 
-/// Formats a `for` loop's optional init segment: empty, or a
-/// declaration (reusing [`try_format_declarators`]).
+/// Parses a comma-separated list of expressions, rendering each.
+/// Leaves the cursor positioned right after the last expression --
+/// callers decide what (if anything) should follow.
+fn parse_expression_list(c: &mut Cursor) -> Option<Vec<String>> {
+    let mut exprs = Vec::new();
+    loop {
+        exprs.push(render(&parse_expression(c)?));
+        if let Some(Token::Symbol(',')) = c.peek() {
+            c.next();
+        } else {
+            break;
+        }
+    }
+    Some(exprs)
+}
+
+/// Formats a `for` loop's optional init segment: empty, a declaration
+/// (reusing [`try_format_declarators`]), or -- when there's no type --
+/// a comma-separated list of expressions (`i = 0, j = 10`).
 fn format_for_init(tokens: &[Token]) -> Option<String> {
     if tokens.is_empty() {
         return Some(String::new());
     }
-    try_format_declarators(tokens)
+    try_format_declarators(tokens).or_else(|| {
+        let mut c = Cursor::new(tokens);
+        let exprs = parse_expression_list(&mut c)?;
+        c.at_end().then(|| exprs.join(", "))
+    })
 }
 
 /// Formats a `for` loop's optional condition segment: empty, or a
@@ -759,18 +811,11 @@ fn format_for_condition(tokens: &[Token]) -> Option<String> {
 fn format_for_increment(tokens: &[Token]) -> Option<String> {
     let mut c = Cursor::new(tokens);
 
-    let mut increments = Vec::new();
-    if !matches!(c.peek(), Some(Token::Symbol(')'))) {
-        loop {
-            increments.push(render(&parse_expression(&mut c)?));
-            match c.peek() {
-                Some(Token::Symbol(',')) => {
-                    c.next();
-                }
-                _ => break,
-            }
-        }
-    }
+    let increments = if matches!(c.peek(), Some(Token::Symbol(')'))) {
+        Vec::new()
+    } else {
+        parse_expression_list(&mut c)?
+    };
 
     if !matches!(c.next()?, Token::Symbol(')')) {
         return None;
