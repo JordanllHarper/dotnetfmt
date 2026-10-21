@@ -252,17 +252,16 @@ fn parse_type_parameter_list(c: &mut Cursor) -> Option<Vec<String>> {
     let mut params = Vec::new();
     loop {
         params.push(as_ident(c.next()?)?.to_string());
-        match c.peek() {
-            Some(Token::Symbol(',')) => {
-                c.next();
-            }
-            _ => break,
+        if let Some(Token::Symbol(',')) = c.peek() {
+            c.next();
+        } else {
+            break;
         }
     }
-    match c.next()? {
-        Token::Symbol('>') => Some(params),
-        _ => None,
-    }
+    let Some(Token::Symbol('>')) = c.next() else {
+        return None;
+    };
+    Some(params)
 }
 
 /// Formats a class declaration: `modifiers* class Name<T, ...>? (:
